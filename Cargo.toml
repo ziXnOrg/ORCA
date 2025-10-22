@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+	"crates/orca-core",
+	"crates/orchestrator",
+	"crates/event-log",
+	"crates/budget",
+	"crates/policy",
+	"crates/telemetry",
+	"crates/replay-cli",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
+nursery = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+
+[profile.bench]
+lto = "thin"
+codegen-units = 1
+opt-level = 3

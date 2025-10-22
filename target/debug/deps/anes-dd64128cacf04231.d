@@ -1,0 +1,12 @@
+/Users/shaiiko/ORCA/target/debug/deps/anes-dd64128cacf04231.d: /Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/lib.rs /Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/macros.rs /Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/sequences.rs /Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/sequences/attribute.rs /Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/sequences/buffer.rs /Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/sequences/color.rs /Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/sequences/cursor.rs /Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/sequences/terminal.rs
+
+/Users/shaiiko/ORCA/target/debug/deps/libanes-dd64128cacf04231.rmeta: /Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/lib.rs /Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/macros.rs /Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/sequences.rs /Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/sequences/attribute.rs /Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/sequences/buffer.rs /Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/sequences/color.rs /Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/sequences/cursor.rs /Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/sequences/terminal.rs
+
+/Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/lib.rs:
+/Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/macros.rs:
+/Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/sequences.rs:
+/Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/sequences/attribute.rs:
+/Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/sequences/buffer.rs:
+/Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/sequences/color.rs:
+/Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/sequences/cursor.rs:
+/Users/shaiiko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anes-0.1.6/src/sequences/terminal.rs:

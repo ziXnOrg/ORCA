@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orca.dev/schemas/metadata/v1",
+  "title": "ORCA Envelope Metadata v1",
+  "type": "object",
+  "required": ["id", "trace_id", "agent", "kind", "protocol_version", "ts_ms"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1},
+    "parent_id": {"type": "string"},
+    "trace_id": {"type": "string", "minLength": 1},
+    "agent": {"type": "string", "minLength": 1},
+    "kind": {"type": "string", "enum": ["agent_task", "agent_result", "agent_error"]},
+    "payload": {"type": ["object", "array", "string", "number", "boolean", "null"]},
+    "timeout_ms": {"type": "integer", "minimum": 0},
+    "protocol_version": {"type": "integer", "const": 1},
+    "ts_ms": {"type": "integer", "minimum": 0}
+  },
+  "additionalProperties": true
+}

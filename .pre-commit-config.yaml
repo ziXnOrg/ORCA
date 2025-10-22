@@ -1,0 +1,36 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-executables-have-shebangs
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.3
+    hooks:
+      - id: gitleaks
+        name: gitleaks secret scan
+        entry: gitleaks detect --source . --no-banner --redact
+        language: golang
+        pass_filenames: false
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt --check
+        entry: bash -lc 'cargo fmt --all -- --check'
+        language: system
+        pass_filenames: false
+      - id: cargo-clippy
+        name: cargo clippy -D warnings
+        entry: bash -lc 'cargo clippy --all-targets --all-features -- -D warnings'
+        language: system
+        pass_filenames: false
+      - id: cargo-test
+        name: cargo test
+        entry: bash -lc 'cargo test --all --all-features --quiet'
+        language: system
+        pass_filenames: false

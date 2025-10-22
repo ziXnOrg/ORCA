@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package orca.v1;
+
+option go_package = "github.com/orca/agentmesh/api/orca/v1";
+
+// Message envelope (Phase 1: JSON payload for flexibility)
+message Envelope {
+  string id = 1;
+  string parent_id = 2;
+  string trace_id = 3;
+  string agent = 4;
+  string kind = 5; // agent_task | agent_result | agent_error
+  string payload_json = 6;
+  uint64 timeout_ms = 7;
+  uint32 protocol_version = 8; // starts at 1
+  uint64 ts_ms = 9;
+  UsageHint usage = 10; // optional usage hints from SDK/tool (tokens/cost)
+}
+
+message UsageHint {
+  uint64 tokens = 1;           // optional; 0 means unset
+  uint64 cost_micros = 2;      // optional; 0 means unset
+}
+
+// Budget configuration passed at run start (Phase 3)
+message Budget {
+  uint64 max_tokens = 1;        // optional; 0 means unset
+  uint64 max_cost_micros = 2;   // optional; 0 means unset
+}
+
+message StartRunRequest {
+  string workflow_id = 1;
+  Envelope initial_task = 2;
+  Budget budget = 3;            // optional per-run budget limits
+}
+message StartRunResponse { string run_id = 1; }
+
+message SubmitTaskRequest {
+  string run_id = 1;
+  Envelope task = 2;
+}
+message SubmitTaskResponse { bool accepted = 1; }
+
+message StreamEventsRequest {
+  string run_id = 1;
+  uint64 start_event_id = 2;  // inclusive; 0 means from beginning
+  uint64 since_ts_ms = 3;     // optional time filter; 0 means ignore
+  uint32 max_events = 4;      // max events to stream in this call; 0 means unbounded
+}
+message StreamEventsResponse { Envelope event = 1; }
+
+message FetchResultRequest { string run_id = 1; string parent_id = 2; }
+message FetchResultResponse { Envelope result = 1; }
+
+service Orchestrator {
+  rpc StartRun (StartRunRequest) returns (StartRunResponse);
+  rpc SubmitTask (SubmitTaskRequest) returns (SubmitTaskResponse);
+  rpc StreamEvents (StreamEventsRequest) returns (stream StreamEventsResponse);
+  rpc FetchResult (FetchResultRequest) returns (FetchResultResponse);
+}

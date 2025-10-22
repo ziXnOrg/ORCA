@@ -1,0 +1,19 @@
+[bans]
+deny = [
+    { name = "openssl" },
+]
+
+[licenses]
+# Allow common permissive licenses
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

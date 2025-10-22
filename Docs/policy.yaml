@@ -1,0 +1,13 @@
+rules:
+  - name: "Default-Deny-All-External-Tools"
+    when: "event.type == 'ToolInvocation'"
+    action: "deny"
+    message: "External tools are disabled by default."
+  - name: "Redact-PII-Patterns"
+    when: "event.type in ['LLMPrompt','AgentOutput'] and pii_detect(event.text)"
+    action: "modify"
+    transform: "redact_pii"
+  - name: "Allow-LLM-Calls"
+    when: "event.type == 'LLMPrompt'"
+    action: "allow_but_flag"
+    level: "info"

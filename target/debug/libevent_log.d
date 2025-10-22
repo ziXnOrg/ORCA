@@ -1,0 +1,1 @@
+/Users/shaiiko/ORCA/target/debug/libevent_log.rlib: /Users/shaiiko/ORCA/crates/event-log/src/lib.rs /Users/shaiiko/ORCA/crates/orca-core/src/../../../Docs/metadata.schema.json /Users/shaiiko/ORCA/crates/orca-core/src/lib.rs

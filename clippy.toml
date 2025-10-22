@@ -1,0 +1,9 @@
+# ORCA clippy configuration
+# Lint levels are set in Cargo.toml workspace.lints.clippy
+# This file can define clippy-specific options (thresholds, etc.)
+
+# Cognitive complexity threshold
+cognitive-complexity-threshold = 15
+
+# Type complexity threshold
+type-complexity-threshold = 250

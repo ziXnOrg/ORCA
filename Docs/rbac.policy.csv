@@ -1,0 +1,5 @@
+p, admin, *, *
+p, reader, run:*, read
+
+g, alice, admin
+g, bob, reader

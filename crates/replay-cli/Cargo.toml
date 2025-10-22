@@ -1,0 +1,22 @@
+[package]
+name = "replay-cli"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "WAL replay CLI for time-travel debugging"
+
+[[bin]]
+name = "orca-replay"
+path = "src/main.rs"
+
+[dependencies]
+orca-core = { path = "../orca-core" }
+event-log = { path = "../event-log" }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[dev-dependencies]
+tempfile = "3"
+anyhow = "1"
+
