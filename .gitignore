@@ -1,0 +1,60 @@
+# Top-level .gitignore for ORCA
+# Keep deterministic, auditable source in Git; exclude local build/output artifacts and editor cruft.
+
+# Rust build output
+/target/
+**/target/
+
+# Cargo/Tooling caches (keep Cargo.lock committed)
+.cargo/.package-cache/
+.cargo/registry/
+.cargo/git/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editors/IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python (SDK/dev)
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.venv/
+venv/
+.python-version
+.coverage
+coverage/
+htmlcov/
+
+# Node/TypeScript (SDK/dev)
+node_modules/
+.pnpm-store/
+dist/
+build/
+
+# Env/config
+.env
+.env.*
+.envrc
+*.local
+*.secrets
+
+# Logs and temp
+logs/
+*.log
+.tmp/
+tmp/
+.cache/
+
+# Misc
+*.bak
+*.tmp
+
