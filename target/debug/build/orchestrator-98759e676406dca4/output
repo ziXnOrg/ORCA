@@ -1,3 +1,0 @@
-cargo:rerun-if-changed=../../Docs/API/orca_v1.proto
-cargo:rerun-if-changed=../../Docs/API
-cargo:rerun-if-changed=../../Docs/API/orca_v1.proto

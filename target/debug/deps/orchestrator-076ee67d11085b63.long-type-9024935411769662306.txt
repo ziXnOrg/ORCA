@@ -1,1 +1,0 @@
-Pin<Box<dyn Future<Output = Result<tonic::Response<orca_v1::SubmitTaskResponse>, Status>> + Send>>
