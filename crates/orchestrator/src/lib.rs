@@ -8,6 +8,7 @@ use event_log::{EventLogError, EventRecord, JsonlEventLog};
 use orca_core::envelope::Envelope;
 use policy::{DecisionKind, Engine as PolicyEngine};
 use serde_json::{json, Value as JsonValue};
+use std::sync::{Arc, RwLock};
 #[cfg(feature = "otel")]
 use telemetry::metrics::init_budget_instruments;
 use telemetry::BudgetMetrics;
@@ -39,7 +40,7 @@ pub struct OrchestratorService {
     log: JsonlEventLog,
     seen_ids: std::sync::Arc<DashSet<String>>, // idempotency: seen message ids
     pub index: RunIndex,
-    policy: PolicyEngine,
+    policy: Arc<RwLock<PolicyEngine>>,
     budget: BudgetManager,
     budgets_by_run: std::sync::Arc<DashMap<String, BudgetManager>>, // per-run budgets
     metrics: BudgetMetrics,
@@ -48,6 +49,24 @@ pub struct OrchestratorService {
 #[allow(clippy::result_large_err)]
 impl OrchestratorService {
     pub fn new(log: JsonlEventLog) -> Self {
+        let policy = Arc::new(RwLock::new(PolicyEngine::new()));
+        // Optional policy autoload from env
+        if let Ok(path) = std::env::var("ORCA_POLICY_PATH") {
+            let _ = policy.write().unwrap().load_from_yaml_path(&path);
+            if let Ok(ms_str) = std::env::var("ORCA_POLICY_RELOAD_MS") {
+                if let Ok(ms) = ms_str.parse::<u64>() {
+                    if ms > 0 {
+                        let pol = policy.clone();
+                        tokio::spawn(async move {
+                            loop {
+                                sleep(Duration::from_millis(ms)).await;
+                                let _ = pol.write().unwrap().load_from_yaml_path(&path);
+                            }
+                        });
+                    }
+                }
+            }
+        }
         Self {
             log,
             seen_ids: std::sync::Arc::new(DashSet::new()),
@@ -57,7 +76,7 @@ impl OrchestratorService {
                 usage_by_run_agent: std::sync::Arc::new(DashMap::new()),
                 run_start_ts_by_run: std::sync::Arc::new(DashMap::new()),
             },
-            policy: PolicyEngine::new(),
+            policy,
             budget: BudgetManager::new(BudgetConfig::default()),
             budgets_by_run: std::sync::Arc::new(DashMap::new()),
             metrics: BudgetMetrics::new(),
@@ -139,6 +158,85 @@ impl OrchestratorService {
             Ok(())
         }
     }
+
+    fn redact_event_payload(&self, mut payload: JsonValue) -> JsonValue {
+        // If event carries an "envelope" object, apply policy redaction to it
+        if let Some(env) = payload.get("envelope").cloned() {
+            if env.is_object() {
+                let decision = self.policy.read().unwrap().pre_submit_task(&env);
+                if let Some(redacted) = decision.payload {
+                    // Replace envelope with redacted version
+                    if let Some(slot) = payload.get_mut("envelope") {
+                        *slot = redacted;
+                    }
+                }
+            }
+        }
+        payload
+    }
+}
+
+
+impl OrchestratorService {
+    pub fn load_policy_from_path<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), Status> {
+        self
+            .policy
+            .write()
+            .unwrap()
+            .load_from_yaml_path(path)
+            .map_err(|e| Status::internal(format!("policy load failed: {}", e)))
+    }
+
+    fn append_policy_audit(
+        &self,
+        phase: &str,
+        run_id: Option<&str>,
+        workflow_id: Option<&str>,
+        env: &JsonValue,
+        d: &policy::Decision,
+    ) {
+        use policy::DecisionKind as DK;
+        let outcome = match d.kind {
+            DK::Deny => "denied",
+            DK::Modify => "modified",
+            DK::Allow => {
+                if matches!(d.action.as_deref(), Some("allow_but_flag")) {
+                    "allowed_flagged"
+                } else {
+                    "allowed"
+                }
+            }
+        };
+        // Only emit for deny/modify/allow_but_flag
+        let should_emit = matches!(d.kind, DK::Deny | DK::Modify)
+            || matches!(d.action.as_deref(), Some("allow_but_flag"));
+        if !should_emit { return; }
+
+        let envelope_id = env.get("id").and_then(|v| v.as_str());
+        let agent = env.get("agent").and_then(|v| v.as_str());
+        let kind = env.get("kind").and_then(|v| v.as_str());
+        let trace_id = env.get("trace_id").and_then(|v| v.as_str());
+
+        let evt = json!({
+            "event": "policy_audit",
+            "phase": phase,
+            "run_id": run_id,
+            "workflow_id": workflow_id,
+            "envelope_id": envelope_id,
+            "agent": agent,
+            "envelope_kind": kind,
+            "trace_id": trace_id,
+            "rule_name": d.rule_name,
+            "action": d.action,
+            "reason": d.reason,
+            "outcome": outcome,
+        });
+        let _ = self.log.append(
+            orca_core::ids::next_monotonic_id(),
+            orca_core::ids::now_ms(),
+            &evt,
+        );
+    }
 }
 
 #[allow(clippy::result_large_err, clippy::single_match)]
@@ -157,10 +255,13 @@ impl Orchestrator for OrchestratorService {
         // Pre-policy: allow/deny/modify (redaction)
         if let Some(ref env) = r.initial_task {
             let _span = info_span!("agent.policy.check", run=%r.workflow_id, phase="pre_start_run", agent=%env.agent).entered();
-            let env_json = serde_json::to_value(env).map_err(internal_serde)?;
-            match self.policy.pre_start_run(&env_json).kind {
+            let mut env_json = serde_json::to_value(env).map_err(internal_serde)?;
+            let decision = self.policy.read().unwrap().pre_start_run(&env_json);
+            self.append_policy_audit("pre_start_run", None, Some(&r.workflow_id), &env_json, &decision);
+            match decision.kind {
                 DecisionKind::Deny => return Err(Status::permission_denied("policy deny")),
                 DecisionKind::Modify => {
+                    if let Some(p) = decision.payload { env_json = p; }
                     // replace initial_task with redacted json->proto
                     r.initial_task =
                         Some(serde_json::from_value(env_json).map_err(internal_serde)?);
@@ -197,13 +298,15 @@ impl Orchestrator for OrchestratorService {
                 let _span = info_span!("wal.append", event="start_run", workflow=%wf).entered();
                 let now_ts = orca_core::ids::now_ms();
                 self.index.run_start_ts_by_run.insert(wf.clone(), now_ts);
+                let evt = json!({
+                    "event":"start_run", "workflow_id": wf, "envelope": r.initial_task
+                });
+                let evt = self.redact_event_payload(evt);
                 self.log
                     .append(
                         orca_core::ids::next_monotonic_id(),
                         now_ts,
-                        &json!({
-                            "event":"start_run", "workflow_id": wf, "envelope": r.initial_task
-                        }),
+                        &evt,
                     )
                     .map_err(internal_io)
             },
@@ -232,15 +335,18 @@ impl Orchestrator for OrchestratorService {
         }
 
         // Pre-policy
-        let env_json = {
+        let mut env_json = {
             let env =
                 r.task.as_ref().ok_or_else(|| Status::invalid_argument("missing envelope"))?;
             let _span = info_span!("agent.policy.check", run=%r.run_id, phase="pre_submit_task", agent=%env.agent).entered();
             serde_json::to_value(env).map_err(internal_serde)?
         };
-        match self.policy.pre_submit_task(&env_json).kind {
+        let decision = self.policy.read().unwrap().pre_submit_task(&env_json);
+        self.append_policy_audit("pre_submit_task", Some(&r.run_id), None, &env_json, &decision);
+        match decision.kind {
             DecisionKind::Deny => return Err(Status::permission_denied("policy deny")),
             DecisionKind::Modify => {
+                if let Some(p) = decision.payload { env_json = p; }
                 r.task = Some(serde_json::from_value(env_json).map_err(internal_serde)?);
             }
             DecisionKind::Allow => {}
@@ -398,13 +504,15 @@ impl Orchestrator for OrchestratorService {
         self.retry(
             || async {
                 let _span = info_span!("wal.append", event="task_enqueued", run=%run_id).entered();
+                let evt = json!({
+                    "event":"task_enqueued", "run_id": run_id, "envelope": env_json2
+                });
+                let evt = self.redact_event_payload(evt);
                 self.log
                     .append(
                         orca_core::ids::next_monotonic_id(),
                         orca_core::ids::now_ms(),
-                        &json!({
-                            "event":"task_enqueued", "run_id": run_id, "envelope": env_json2
-                        }),
+                        &evt,
                     )
                     .map_err(internal_io)
             },
@@ -416,7 +524,10 @@ impl Orchestrator for OrchestratorService {
         if env.timeout_ms > 0 {
             let dur = Duration::from_millis(env.timeout_ms);
             let res = timeout(dur, async {}).await;
-            let post = self.policy.post_submit_task(&json!({"result":"stub"}));
+            let post = self.policy.read().unwrap().post_submit_task(&json!({"result":"stub"}));
+            // emit audit only if intervention
+            let audit_env = json!({"id": env.id, "agent": env.agent, "kind": env.kind, "trace_id": env.trace_id});
+            self.append_policy_audit("post_submit_task", Some(&r.run_id), None, &audit_env, &post);
             match res {
                 Ok(_) => info!("task completed"),
                 Err(_) => warn!("task timeout"),
@@ -602,4 +713,102 @@ mod tests {
         let r2 = svc.submit_task(Request::new(req2)).await.unwrap();
         assert!(r2.into_inner().accepted);
     }
+
+    #[tokio::test]
+    async fn policy_audit_deny_emitted_on_submit() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = JsonlEventLog::open(dir.path().join("audit.jsonl")).unwrap();
+        let log_read = log.clone();
+        let svc = OrchestratorService::new(log);
+        // Write a simple policy file
+        let policy_path = dir.path().join("policy.yaml");
+        std::fs::write(
+            &policy_path,
+            r#"rules:
+  - name: Deny-Tools
+    when: ToolInvocation
+    action: deny
+    message: tools not allowed
+"#,
+        )
+        .unwrap();
+        svc.load_policy_from_path(&policy_path).unwrap();
+
+        // Submit a task (any envelope will trigger deny per naive matcher)
+        let env = orca_v1::Envelope {
+            id: "m2".into(),
+            parent_id: "".into(),
+            trace_id: "t2".into(),
+            agent: "A".into(),
+            kind: "agent_task".into(),
+            payload_json: "{}".into(),
+            timeout_ms: 0,
+            protocol_version: 1,
+            ts_ms: orca_core::ids::now_ms(),
+            usage: None,
+        };
+        let req = SubmitTaskRequest { run_id: "r2".into(), task: Some(env) };
+        let res = svc.submit_task(Request::new(req)).await;
+        assert!(matches!(res, Err(Status { .. })));
+
+        // Audit event should be present
+        let recs: Vec<EventRecord<JsonValue>> = log_read.read_range(0, u64::MAX).unwrap();
+        let audits: Vec<_> = recs
+            .into_iter()
+            .filter(|r| r.payload.get("event").and_then(|v| v.as_str()) == Some("policy_audit"))
+            .collect();
+        assert!(!audits.is_empty(), "expected at least one policy_audit event");
+        let p = &audits[audits.len() - 1].payload; // most recent
+        assert_eq!(p.get("outcome").and_then(|v| v.as_str()), Some("denied"));
+        assert_eq!(p.get("action").and_then(|v| v.as_str()), Some("deny"));
+    }
+
+    #[tokio::test]
+    async fn policy_audit_modify_emitted_on_submit() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = JsonlEventLog::open(dir.path().join("audit2.jsonl")).unwrap();
+        let log_read = log.clone();
+        let svc = OrchestratorService::new(log);
+        // Policy with modify on pii_detect
+        let policy_path = dir.path().join("policy.yaml");
+        std::fs::write(
+            &policy_path,
+            r#"rules:
+  - name: Redact-PII-Patterns
+    when: pii_detect
+    action: modify
+    message: redacted
+"#,
+        )
+        .unwrap();
+        svc.load_policy_from_path(&policy_path).unwrap();
+
+        // Envelope contains an SSN-like pattern that should be redacted
+        let payload = json!({"text":"My SSN is 123-45-6789"});
+        let env = orca_v1::Envelope {
+            id: "m3".into(),
+            parent_id: "".into(),
+            trace_id: "t3".into(),
+            agent: "A".into(),
+            kind: "agent_task".into(),
+            payload_json: serde_json::to_string(&payload).unwrap(),
+            timeout_ms: 0,
+            protocol_version: 1,
+            ts_ms: orca_core::ids::now_ms(),
+            usage: None,
+        };
+        let req = SubmitTaskRequest { run_id: "r3".into(), task: Some(env) };
+        let _ = svc.submit_task(Request::new(req)).await.unwrap();
+
+        let recs: Vec<EventRecord<JsonValue>> = log_read.read_range(0, u64::MAX).unwrap();
+        let audits: Vec<_> = recs
+            .into_iter()
+            .filter(|r| r.payload.get("event").and_then(|v| v.as_str()) == Some("policy_audit"))
+            .collect();
+        assert!(!audits.is_empty(), "expected audit event for modify");
+        let p = &audits[audits.len() - 1].payload;
+        assert_eq!(p.get("outcome").and_then(|v| v.as_str()), Some("modified"));
+        assert_eq!(p.get("rule_name").is_some(), true);
+    }
+
 }
