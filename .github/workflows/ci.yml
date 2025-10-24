@@ -86,3 +86,27 @@ jobs:
         with:
           name: lcov.info
           path: lcov.info
+
+  otel-and-replay:
+    name: otel-and-replay smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: 1.75.0
+
+      - name: Build orchestration (otel)
+        run: cargo build -p orchestrator --features otel
+
+      - name: Build replay-cli
+        run: cargo build -p replay-cli
+
+      - name: Debugging guide artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: debugging.md
+          path: Docs/debugging.md
