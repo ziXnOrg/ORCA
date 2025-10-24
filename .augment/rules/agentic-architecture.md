@@ -1,7 +1,6 @@
 ---
-description: Agentic AI system architecture patterns and cognitive frameworks
-globs: ["src/agentic/**", "**/*agent*", "**/*reasoning*", "**/*tool*"]
-alwaysApply: false
+type: "agent_requested"
+description: "Agentic AI system architecture patterns and cognitive frameworks"
 ---
 
 # Rule: Agentic Architecture & Coordination
