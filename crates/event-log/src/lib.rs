@@ -123,3 +123,39 @@ mod unit_tests {
         assert_eq!(got[0].payload, "hello");
     }
 }
+
+
+/// WAL v2 typed schema (skeleton for RED phase).
+pub mod v2 {
+    use serde::{Deserialize, Serialize};
+    use serde_json::Value;
+
+    pub const WAL_VERSION_V2: u8 = 2;
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    #[serde(rename_all = "snake_case")]
+    pub enum EventTypeV2 {
+        StartRun,
+        TaskEnqueued,
+        UsageUpdate,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RecordV2<T> {
+        pub id: super::EventId,
+        pub ts_ms: u64,
+        pub version: u8,
+        pub event_type: EventTypeV2,
+        pub run_id: String,
+        pub trace_id: String,
+        pub payload: T,
+        pub metadata: Value,
+    }
+
+    /// Serialize a V2 record to a JSON line (unimplemented in RED phase).
+    pub fn to_jsonl_line<T: Serialize>(_rec: &RecordV2<T>) -> Result<String, super::EventLogError> {
+        // Intentionally failing path for RED phase to drive TDD.
+        let e = serde_json::from_str::<serde_json::Value>("").unwrap_err();
+        Err(super::EventLogError::Serde(e))
+    }
+}
