@@ -1,3 +1,8 @@
+tool_allowlist:
+  - echo
+  - math
+
+
 rules:
   - name: "Default-Deny-All-External-Tools"
     when: "event.type == 'ToolInvocation'"
