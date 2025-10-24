@@ -125,7 +125,7 @@ mod unit_tests {
 }
 
 
-/// WAL v2 typed schema (skeleton for RED phase).
+/// WAL v2 typed schema with deterministic serialization and golden-tested stable ordering.
 pub mod v2 {
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
