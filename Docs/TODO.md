@@ -1,0 +1,1335 @@
+# ORCA Master Task List (Single Source of Truth)
+
+This authoritative TODO consolidates:
+- Baseline roadmap in Docs/Roadmap.md (Phases 0–7; Phase 5 complete)
+- Enhancement specs in Docs/ORCA-Enhancement-Research-Directive.md (E1–E4)
+- Unified plan in Docs/ORCA-Enhancement-Unified-Roadmap.md (Phase 6a, 6b, 7; Milestones M1–M12)
+
+Principles: fail-closed security; deterministic replay; event-sourced auditability; observability-first; evidence-based estimates; backward compatibility with safe migration and explicit rollback.
+
+Legend for tasks
+- Format: "- [ ] ID — Title — AC: …; Deps: …; Effort: …; Affected: …; Tests: …; Docs: …; Research: …; Risk: …; Rollback: …"
+- Risk: Low/Med/High (High ⇒ requires Arch/Sec review + dedicated rollback plan)
+- Coverage: ≥90% unit+integration unless noted; property-based where specified; perf gates in CI
+
+---
+
+## Quick Start (Immediate Next 10 Tasks for Phase 6a)
+The following tasks are the highest-priority items from Phase 6a. See the Phase 6a section below for full 11-category task details.
+
+1. T-6a-E1-EL-01 — Define WAL v2 schemas + golden tests (see Phase 6a)
+2. T-6a-E1-ORCH-02 — Virtual Time service (Clock trait) + injection (see Phase 6a)
+3. T-6a-E3-PH-03 — Wasmtime runner skeleton + hostcalls (see Phase 6a)
+4. T-6a-E3-SEC-04 — Plugin manifest verification (Sigstore/Cosign) (see Phase 6a)
+5. T-6a-E2-POL-05 — Governance baseline (deny-on-error, taxonomy, ordering) (see Phase 6a)
+6. T-6a-E4-BS-06 — Blob Store MVP (CAS + zstd + enc-at-rest) (see Phase 6a)
+7. T-6a-E4-ORCH-07 — Envelope attachments + BlobRef in WAL (see Phase 6a)
+8. T-6a-E4-SEC-08 — Antivirus + EXIF scrub gates (see Phase 6a)
+9. T-6a-E2-OBS-09 — Audit + metrics for governance (see Phase 6a)
+10. T-6a-SDK-10 — SDK Artifact API skeleton (Py/TS) (see Phase 6a)
+
+---
+
+## Phase 6a (Foundations; ~4 weeks) — Milestones M1–M4
+
+### Enhancement 1 — Advanced Determinism (E1)
+#### crates/event_log
+- [ ] T-6a-E1-EL-01 — WAL v2 schemas + golden tests — AC: WALv2 JSONL schema; stable ordering; golden files; perf budgets; Deps: none; Effort: 2d; Affected: crates/event_log; Tests: unit+golden; Docs: schema ref; Risk: Med; Rollback: wal_v2 flag.
+  - [ ] Framework: CoT (deterministic data modeling + golden tests)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: crates/event_log/src; Quick Start EL-01; Unified Roadmap E1
+    - [ ] Stratum 2: record/append/flush paths; reader/parser; golden fixtures folder
+    - [ ] Stratum 3: field ordering, number formatting, redaction flags; fsync boundaries
+    - [ ] Stop when: encode/decode parity holds across golden sets
+  - [ ] Checkpoint Gates: STOP before field removals/renames; STOP before changing timestamp semantics
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: introduce SchemaV2 + adapters; keep V1 path intact behind wal_v2 flag
+    - [ ] Local validation: generate golden files; parse+roundtrip; fuzz parser on random entries
+    - [ ] Quality threshold: zero diff roundtrips; no panics; clippy/fmt clean
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Golden tests: 10+ fixtures (happy/edge/error) pass byte-for-byte
+    - [ ] Determinism: stable field order; stable float/number formatting (no locale)
+    - [ ] Perf budgets: append+flush ≤5 ms p95 for ≤10 KiB entry; parse ≥50k events/s on dev laptop; overhead ≤3% p95 vs V1
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p event_log -- --nocapture; cargo clippy -p event_log -D warnings; cargo fmt --check
+    - [ ] Property tests: proptest for encode/decode equivalence
+    - [ ] Optional: cargo afl/fuzz if enabled for parser inputs
+  - [ ] Observability: event_log.append.ms, event_log.flush.ms, event_log.bytes_written
+    - [ ] Trace attrs: wal_version, schema_migration, golden_case
+  - [ ] Security & Reliability: redact secrets pre-encode; atomic writes; fsync on checkpoints; backpressure (drop-on-backpressure=false)
+  - [ ] Determinism & Concurrency: no wall-clock; no nondet ordering; single-writer invariant; Loom tests on writer lock
+  - [ ] Rollback & Risk: wal_v2=false flag keeps V1; migration plan documented; revert by feature flag flip
+  - [ ] Artifacts & Repro: schemas/v2.md; tests/golden/*.jsonl; bench notes and seed
+  - [ ] Rules referenced: agentic-architecture.md; rust-standards.md; testing-validation.md; performance-optimization.md; observability.md; security-privacy.md
+#### crates/orchestrator
+- [ ] T-6a-E1-ORCH-02 — Virtual Time service + injection — AC: deterministic Clock trait; process-wide default; perf budgets; Deps: T-6a-E1-EL-01; Effort: 2d; Affected: crates/orchestrator; Tests: unit; Docs: dev guide; Risk: Med; Rollback: toggle.
+  - [ ] Framework: CoT (debugging/logic; invariant-driven)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: crates/orchestrator; Quick Start ORCH-02; Unified Roadmap E1
+    - [ ] Stratum 2: current time usages (now(), SystemTime, Instant); injection points
+    - [ ] Stratum 3: seed/RunId propagation; WAL timestamp sources; replay mode
+    - [ ] Stop when: all time reads go through Clock; tests pass
+  - [ ] Checkpoint Gates: STOP before merging if any direct SystemTime uses remain
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: define Clock trait + impls (SystemClock, VirtualClock); pass via context
+    - [ ] Local validation: unit tests: monotonicity, determinism under replay; injection in orchestrator services
+    - [ ] Quality threshold: no direct now()/Instant::now in codebase (lint deny)
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] All time access is via Clock; replay uses VirtualClock seeded from WAL
+    - [ ] Perf budgets: Clock::now() overhead ≤200 ns p95 vs direct; zero allocations; no syscalls in VirtualClock
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p orchestrator -- --nocapture; cargo clippy -p orchestrator -D warnings; cargo fmt --check
+    - [ ] Grep/lint: ripgrep "SystemTime::now|Instant::now"; deny in CI via clippy lint
+  - [ ] Observability: orch.clock.now.count, orch.replay.clock.sync.ms; trace attr: run_id, clock_kind
+  - [ ] Security & Reliability: fail-closed on clock drift; bounds on skew; no time from untrusted input
+  - [ ] Determinism & Concurrency: VirtualClock single source; Loom tests on shared clock updates
+  - [ ] Rollback & Risk: feature flag use_virtual_clock=false; fallback to SystemClock
+  - [ ] Artifacts & Repro: dev guide section; examples of injection
+  - [ ] Rules referenced: rust-standards.md; agentic-architecture.md; testing-validation.md; performance-optimization.md
+#### crates/external_io_proxy (within orchestrator)
+- [ ] T-6a-E1-PROXY-11 — HTTP/gRPC capture skeleton — AC: proxy routes; redact config; WAL capture stubs; perf budgets; Deps: T-6a-E1-EL-01; Effort: 2d; Affected: crates/orchestrator; Tests: unit; Docs: proxy config; Risk: Med; Rollback: bypass to direct, warn.
+  - [ ] Framework: First Principles (trust boundaries, capture points)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: orchestrator http/grpc clients; E1 spec; hostcall catalog
+    - [ ] Stratum 2: interceptors/middleware; header/body redaction map; WAL append API
+    - [ ] Stratum 3: bypass modes; deny-on-error; timeouts and retries
+    - [ ] Stop when: e2e flow through proxy emits WAL stubs
+  - [ ] Checkpoint Gates: STOP before enabling by default; STOP before adding external deps
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: add grpc/http interceptors; emit minimal WALv2 ExternalIOStarted/Finished
+    - [ ] Local validation: unit tests for header redaction; integration test with mock server
+    - [ ] Quality threshold: zero secret leakage; configurable redact
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Routes proxied: HTTP(S) + gRPC; redact config applied; WAL stubs emitted
+    - [ ] Perf budgets: added RTT overhead ≤2 ms p95 (p99 ≤5 ms); CPU overhead ≤5%; memory ≤8 MiB per in-flight
+    - [ ] Failure posture: deny on capture error; bypass only with explicit flag
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p orchestrator --test proxy_* -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Concurrency: Loom on interceptor critical sections; miri for UB on feature gates
+  - [ ] Observability: proxy.rtt.ms, proxy.redaction.applied.count, proxy.capture.emit.ms
+    - [ ] Trace attrs: url.host, scheme, grpc_method, redaction_profile
+  - [ ] Security & Reliability: mTLS to upstream; header allowlist; OTel baggage scrubbing; timeouts/backoff
+  - [ ] Determinism & Concurrency: all captured fields ordered; timestamps via VirtualClock; stable header ordering
+  - [ ] Rollback & Risk: bypass_to_direct=true flag; warn on disable; audit trail
+  - [ ] Artifacts & Repro: sample config (redaction.yaml); mock server script
+  - [ ] Rules referenced: security-privacy.md; agentic-architecture.md; testing-validation.md; observability.md
+#### crates/llm_capture (module)
+- [ ] T-6a-E1-LLM-12 — LLM prompt/output capture — AC: capture inputs/outputs; entropy refs optional; perf budgets; Deps: T-6a-E1-EL-01; Effort: 2d; Affected: crates/orchestrator; Tests: integration; Docs: capture policy; Risk: Med; Rollback: capture off.
+  - [ ] Framework: CoT (capture model and invariants)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: orchestrator LLM call sites; E1 LLM capture spec; Quick Start budget refs
+    - [ ] Stratum 2: prompt redaction hooks; output truncation; token/seed metadata
+    - [ ] Stratum 3: entropy references (sampler seeds, temperature); WAL fields
+    - [ ] Stop when: golden capture exists for 3 scenarios
+  - [ ] Checkpoint Gates: STOP before enabling on production flows; STOP if redaction uncertain
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: wrap LLM invocations; emit CaptureStarted/Finished with input/output digests and optional raw
+    - [ ] Local validation: integration tests with fake LLM client; golden capture comparison
+    - [ ] Quality threshold: deterministic under replay; zero PII leakage when redaction on
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Captures include inputs, outputs, params (temperature, top_p), seed/RunId
+    - [ ] Perf budgets: capture overhead ≤3% p95; extra mem ≤16 MiB per request; WAL record time ≤5 ms p95
+    - [ ] Redaction modes: OFF/WARN/ON; deny on config error
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p orchestrator --test llm_capture_* -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Concurrency: Loom for concurrent captures; miri on capture helpers
+  - [ ] Observability: llm.capture.ms, llm.tokens, llm.redaction.applied.count
+    - [ ] Trace attrs: model, provider, temperature, seed
+  - [ ] Security & Reliability: redact secrets; cap raw payload size (e.g., 64 KiB); deny on missing redaction profile
+  - [ ] Determinism & Concurrency: time via VirtualClock; stable ordering; optional raw stored by digest
+  - [ ] Rollback & Risk: capture_enabled=false flag; fallback to digest-only
+  - [ ] Artifacts & Repro: golden captures in tests/golden/llm/*; sample config
+  - [ ] Rules referenced: security-privacy.md; agentic-architecture.md; testing-validation.md; performance-optimization.md; observability.md
+
+### Enhancement 3 — Plugin Architecture (E3)
+#### crates/plugin_host
+- [ ] T-6a-E3-PH-03 — Wasmtime runner + hostcalls — AC: as in Quick Start; Deps: T-6a-E1-EL-01; Effort: 3d; Affected: crates/plugin_host; Tests: unit+integration; Docs: authoring; Risk: High; Rollback: disable.
+- [ ] T-6a-E3-SEC-04 — Manifest verification (Sigstore) — AC: as above; Deps: T-6a-E3-PH-03; Effort: 2d; Affected: crates/plugin_host; Tests: unit; Docs: signing; Risk: High; Rollback: block unsigned.
+- [ ] T-6a-E3-CAP-13 — Capability model (no ambient authority) — AC: per-plugin caps persisted; denied by default; perf budgets; Deps: T-6a-E3-PH-03; Effort: 2d; Affected: crates/plugin_host; Tests: unit+integration; Docs: caps guide; Risk: Med; Rollback: all-caps-off.
+  - [ ] Framework: First Principles (least privilege, explicit capability grants)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: crates/plugin_host; E3 spec; manifest schema; hostcall registry
+    - [ ] Stratum 2: wasm invocation path; hostcall dispatch; manifest parse/validate; signer checks
+    - [ ] Stratum 3: deny-by-default logic; wildcard grants; per-call override prohibition
+    - [ ] Stop when: a plugin with missing caps is denied and with exact caps succeeds
+  - [ ] Checkpoint Gates: STOP before ambient authority; STOP on wildcard "*" caps; STOP before enabling by default
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: Capability enum/bitset + manifest grants + check in hostcall entry; default none
+    - [ ] Local validation: unit tests for allow/deny; integration test with sample WASM calling gated hostcalls
+    - [ ] Quality threshold: zero bypasses; fail-closed on manifest/parsing errors
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Default policy denies all hostcalls unless explicitly granted
+    - [ ] Per-plugin caps persisted and enforced on every hostcall
+    - [ ] Perf budgets: cap-check overhead ≤100 ns p95; plugin invoke overhead ≤1% p95
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p plugin_host -- --nocapture; cargo clippy -p plugin_host -D warnings; cargo fmt --check
+    - [ ] Integration: wasmtime-backed test plugin exercising allowed/denied hostcalls
+  - [ ] Observability: plugin.capability.denied.count, plugin.capability.granted.count; trace attrs: plugin_id, capability
+  - [ ] Security & Reliability: signed manifests required; digest pinning; no runtime cap elevation; deny on validation error
+  - [ ] Determinism & Concurrency: read-only caps snapshot per RunId; stable evaluation order; Loom on caps map readers
+  - [ ] Rollback & Risk: capability_enforcement=false flag; fallback to legacy permissive mode for first-party tests only
+  - [ ] Artifacts & Repro: sample manifest (caps.yaml); test WASM; hostcall table doc
+  - [ ] Rules referenced: security-privacy.md; rust-standards.md; testing-validation.md; observability.md
+
+### Enhancement 2 — Ethical Governance (E2)
+#### crates/policy
+- [ ] T-6a-E2-POL-05 — Baseline enforcement + taxonomy — AC: as in Quick Start; Deps: T-6a-E1-EL-01; Effort: 3d; Affected: crates/policy; Tests: unit+integration; Docs: admin; Risk: Med; Rollback: flag.
+- [ ] T-6a-E2-RET-14 — Retention defaults + per-tenant overrides — AC: prod 14d full; dev/stage 30d; hash-only 12m; PHI/SECRETS hash-only default; perf budgets; Deps: T-6a-E2-POL-05; Effort: 1.5d; Affected: crates/policy, config; Tests: unit+property; Docs: retention; Risk: Med; Rollback: extend only.
+  - [ ] Framework: ToT (policy modeling + precedence, fail-closed)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: crates/policy; config schema; E2 taxonomy; blob/WAL purge hooks
+    - [ ] Stratum 2: precedence: tenant override > default > legal minimums; hash-only categories
+    - [ ] Stratum 3: purge scheduler; idempotency; replay safety; dry-run mode
+    - [ ] Stop when: policy merges deterministically and purge jobs produce expected plan
+  - [ ] Checkpoint Gates: STOP before enabling purge; STOP if min legal bounds unclear; STOP on category mismatch
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: evaluate policy to retention plan; expose dry-run report; gate real purge by flag
+    - [ ] Local validation: property tests (monotonicity, no-shorter-than-min); golden dry-run outputs
+    - [ ] Quality threshold: no purge on error; only extend retention on rollback
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Deterministic merge of defaults and per-tenant overrides
+    - [ ] Hash-only for PHI/SECRETS by default; full payload TTLs as specified
+    - [ ] Perf budgets: planning ≤50 ms for 1M items summary; purge batch launch ≤10 ms p95; scheduler O(queues)
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p policy -- --nocapture; cargo clippy -p policy -D warnings; cargo fmt --check
+    - [ ] Property tests for precedence and floor constraints; golden reports for sample tenants
+  - [ ] Observability: retention.plan.items, retention.purged.bytes, retention.error.count; trace attrs: tenant_id, category
+  - [ ] Security & Reliability: fail-closed (no purge on ambiguity); idempotent batch keys; backoff on storage errors
+  - [ ] Determinism & Concurrency: scheduler uses VirtualClock; stable batch ordering; no concurrent purge of same key
+  - [ ] Rollback & Risk: disable purge (plan-only); extend TTLs; document legal floors by data class
+  - [ ] Artifacts & Repro: retention.yaml examples; golden plan JSON; purge simulator script
+  - [ ] Rules referenced: security-privacy.md; agentic-architecture.md; testing-validation.md; rust-standards.md
+#### observability
+- [ ] T-6a-E2-OBS-09 — Audit + metrics — AC: as Quick Start; Deps: T-6a-E2-POL-05; Effort: 1.5d; Affected: crates/policy; Tests: unit; Docs: dashboards; Risk: Low; Rollback: metrics-only.
+
+### Enhancement 4 — Multimodal (E4)
+#### crates/blob_store (new)
+- [ ] T-6a-E4-BS-06 — CAS + zstd + encryption — AC: as Quick Start; Deps: T-6a-E1-EL-01; Effort: 3d; Affected: crates/blob_store; Tests: unit+property; Docs: runbook; Risk: High; Rollback: read-only.
+#### crates/orchestrator + crates/event_log
+- [ ] T-6a-E4-ORCH-07 — Attachments + BlobRef in WAL — AC: as Quick Start; Deps: T-6a-E4-BS-06; Effort: 2d; Affected: orchestrator,event_log; Tests: integration+golden; Docs: API; Risk: Med; Rollback: strip.
+#### policy gates
+- [ ] T-6a-E4-SEC-08 — Antivirus + EXIF scrub — AC: as Quick Start; Deps: T-6a-E4-BS-06; Effort: 2d; Affected: policy,blob_store; Tests: integration; Docs: security; Risk: High; Rollback: quarantine.
+#### SDKs
+- [ ] T-6a-SDK-10 — Artifact API skeleton (Py/TS) — AC: as Quick Start; Deps: T-6a-E4-ORCH-07; Effort: 2d; Affected: sdk/python,sdk/ts; Tests: unit+e2e; Docs: examples; Risk: Med; Rollback: disable.
+
+### Cross-Cutting (Phase 6a)
+- [ ] T-6a-CI-15 — CI gates: coverage≥90%, -Werror, perf smoke — AC: CI enforces; baseline perf recorded; perf budgets; Deps: none; Effort: 2d; Affected: .github/workflows, Cargo configs; Tests: CI; Docs: contributor guide; Risk: Med; Rollback: warn-only.
+  - [ ] Framework: ToT (pipeline design)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: .github/workflows; workspace Cargo.toml; existing CI
+    - [ ] Stratum 2: coverage tool (llvm-cov), clippy, fmt, test matrix; perf smoke job
+    - [ ] Stratum 3: cache keys; minimal perf thresholds and trend guard
+    - [ ] Stop when: PRs fail on coverage<90% core, warnings, or perf regression
+  - [ ] Checkpoint Gates: STOP on flaky perf test; STOP before adding heavy runners; STOP if secrets required
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: add clippy -D warnings and fmt check; then coverage gate; then perf smoke with loose thresholds
+    - [ ] Local validation: run jobs on a branch; verify fail/pass conditions
+    - [ ] Quality threshold: deterministic runs; minimal variance
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Coverage ≥90% for core crates; ≥85% workspace overall
+    - [ ] Clippy -D warnings; cargo fmt --check; cargo test --workspace
+    - [ ] Perf smoke: run representative micro-bench; fail on >5% regression p95 vs baseline
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test --workspace; cargo clippy --workspace -D warnings; cargo fmt --all -- --check; cargo llvm-cov --fail-under-lines 85
+    - [ ] Perf smoke: criterion or custom micro-run; compare against committed baseline JSON
+  - [ ] Observability: ci.jobs.count, ci.fail.count{coverage,lint,perf}; artifacts kept 30d
+  - [ ] Security & Reliability: least-privilege tokens; pin actions SHAs; no secrets in logs
+  - [ ] Determinism & Concurrency: serialize perf job; fixed seeds; stable CPU governor if self-hosted
+  - [ ] Rollback & Risk: switch perf to warn-only; relax coverage temporarily with waiver doc
+  - [ ] Artifacts & Repro: workflow YAML; baseline perf JSON; coverage report
+  - [ ] Rules referenced: testing-validation.md; performance-optimization.md; rust-standards.md; observability.md
+- [ ] T-6a-OBS-16 — OTel metrics/traces for new components — AC: blob, plugin, policy metrics emitted; perf budgets; Deps: component tasks; Effort: 1.5d; Affected: observability wiring; Tests: unit+integration; Docs: dashboards; Risk: Low; Rollback: metrics off.
+  - [ ] Framework: CoT (instrumentation coverage)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: observability plumbing; metrics registry; trace spans in orchestrator
+    - [ ] Stratum 2: components: blob_store, plugin_host, policy; required metrics list per rules
+    - [ ] Stratum 3: low-cardinality attrs; sampling; exporter config
+    - [ ] Stop when: required metrics and spans emitted in tests
+  - [ ] Checkpoint Gates: STOP on high-cardinality attrs; STOP before enabling export by default
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: add counters/histograms/timers; wrap external boundaries with spans
+    - [ ] Local validation: in-memory exporter asserts; integration test through orchestrator path
+    - [ ] Quality threshold: <1% p95 latency overhead on hot paths
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Metrics: blob.put.bytes, blob.get.bytes, plugin.invoke.ms, plugin.capability.denied.count, policy.decision.count{allow,deny,flag}
+    - [ ] Traces: spans at external boundaries; attributes: run_id, wal_version, redaction_profile, model/provider
+    - [ ] Perf budgets: overhead ≤1% p95; exporter non-blocking
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test --workspace -E observability -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Use in-memory OTel exporter to assert metric names/units/attrs
+  - [ ] Security & Reliability: never log secrets; redaction hooks; drop unknown attrs; bounded export queues
+  - [ ] Determinism & Concurrency: stable labels; fixed seeds in tests; serialize exporter shutdown
+  - [ ] Rollback & Risk: metrics-only if traces noisy; feature flag for export
+  - [ ] Artifacts & Repro: dashboards JSON; metric dictionary; in-memory exporter harness
+  - [ ] Rules referenced: observability.md; testing-validation.md; performance-optimization.md; security-privacy.md
+
+---
+
+## Phase 6b (Integrations; ~4 weeks) — Milestones M5–M8
+
+### E1 — Determinism Hardening
+#### crates/event_log + orchestrator
+- [ ] T-6b-E1-REL-17 — Recorder hardening + replay parity suite — AC: 100% parity on golden scenarios; perf budgets; Deps: T-6a-E1-*; Effort: 3d; Affected: event_log,orchestrator; Tests: integration+property; Docs: replay guide; Risk: Med; Rollback: disable replay.
+  - [ ] Framework: CoT (determinism diagnostics and parity focus)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: crates/event_log writer/reader; WAL v2 schema; orchestrator replay hooks
+    - [ ] Stratum 2: VirtualClock usage; external I/O capture points; golden tests inventory
+    - [ ] Stratum 3: serialization stability (field order, float fmt); seed handling; env invariants
+    - [ ] Stop when: parity harness reproduces golden scenarios with zero deltas
+  - [ ] Checkpoint Gates: STOP before schema changes; STOP on nondeterministic sources; STOP if replay diverges
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: add replay harness + golden scenarios; fix drift at single source (ordering/field)
+    - [ ] Local validation: digest compare (record vs replay); epsilon bounds for floats documented
+    - [ ] Quality threshold: stable across runs/hosts; no flaky tests
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] 100% parity across defined scenarios (bit-for-bit or bounded epsilon)
+    - [ ] Perf budgets: record overhead ≤3% p95; replay overhead ≤1% p95; replay wall-time ≤ original ±5%
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p event_log -E replay -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Property tests on serialization round-trip; golden files under tests/golden/replay/*
+  - [ ] Observability: wal.record.ms, wal.replay.ms, wal.parity.fail.count; attrs: run_id, wal_version, scenario
+  - [ ] Security & Reliability: immutable WAL; checksum verify; deny on mismatch
+  - [ ] Determinism & Concurrency: single-writer invariant; VirtualClock for timestamps; stable iteration order
+  - [ ] Rollback & Risk: feature flag to disable replay; record-only mode with warning
+  - [ ] Artifacts & Repro: golden WALs; scenario manifests; seeds and env manifest
+  - [ ] Rules referenced: agentic-architecture.md; testing-validation.md; rust-standards.md; performance-optimization.md; observability.md; security-privacy.md
+- [ ] T-6b-E1-HC-18 — Hostcall catalog completion (http/storage) — AC: headers/body redaction config; WAL capture; perf budgets; Deps: T-6a-E1-PROXY-11; Effort: 2d; Affected: orchestrator; Tests: integration; Docs: hostcall spec; Risk: Med; Rollback: bypass proxy.
+  - [ ] Framework: First Principles (trust boundaries, hostcall invariants)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: hostcall registry; http/storage call sites; proxy interceptors
+    - [ ] Stratum 2: redaction map (headers/body); WAL capture fields; error taxonomy
+    - [ ] Stratum 3: bypass modes; timeouts/backoff; idempotency keys
+    - [ ] Stop when: http+storage hostcalls emit correct WAL and redactions in tests
+  - [ ] Checkpoint Gates: STOP on missing redaction; STOP before enabling by default; STOP on high-cardinality headers
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: add hostcall entries + redaction config; emit WAL stubs; tests with mock servers
+    - [ ] Local validation: golden WAL compare; header/body redaction unit tests
+    - [ ] Quality threshold: zero secret leakage; deny on redaction misconfig
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Completed catalog for http/storage hostcalls (methods, headers, bodies)
+    - [ ] Perf budgets: added RTT overhead ≤2 ms p95 (p99 ≤5 ms); memory ≤8 MiB per in-flight op
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p orchestrator --test hostcall_* -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Integration: mock HTTP server + storage stub; golden WALs
+  - [ ] Observability: hostcall.invoke.ms, hostcall.redaction.applied.count, hostcall.capture.emit.ms; attrs: scheme, method, bucket
+  - [ ] Security & Reliability: mTLS to upstream; header allowlist; bounded retries; backoff with jitter
+  - [ ] Determinism & Concurrency: VirtualClock; stable header ordering; deterministic idempotency keys
+  - [ ] Rollback & Risk: bypass_to_direct=true flag; disable specific hostcalls by allowlist
+  - [ ] Artifacts & Repro: redaction.yaml; hostcall spec doc; mock scripts
+  - [ ] Rules referenced: security-privacy.md; agentic-architecture.md; testing-validation.md; observability.md; performance-optimization.md
+
+### E3 — Plugin Runners & Lifecycle
+#### crates/plugin_host
+- [ ] T-6b-E3-GRPC-19 — gRPC runner + proxy + mTLS — AC: round-trip invoke; WAL capture via proxy; perf budgets; Deps: T-6a-E3-PH-03; Effort: 3d; Affected: plugin_host; Tests: integration; Docs: runner guide; Risk: High; Rollback: disable.
+  - [ ] Framework: ToT (runner architecture, network hardening)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: crates/plugin_host runner interfaces; proxy path; cert management
+    - [ ] Stratum 2: handshake protocol; invocation framing; error handling; WAL capture hooks
+    - [ ] Stratum 3: mTLS config; ALPN; DNS pinning/allowlist; resource caps per runner
+    - [ ] Stop when: round-trip call succeeds with WAL capture through proxy in test
+  - [ ] Checkpoint Gates: STOP before enabling by default; STOP without mTLS; STOP on unpinned endpoints
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: single echo plugin via gRPC; register; invoke; capture
+    - [ ] Local validation: integration test spawns fake plugin server; assert WAL records
+    - [ ] Quality threshold: stable under reconnect; bounded retries
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] mTLS enforced; round-trip invoke; WAL capture via proxy path
+    - [ ] Perf budgets: cold start ≤300 ms p95; invoke ≤10 ms p95; runner RSS ≤50 MiB
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p plugin_host --test grpc_runner_* -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Fault injection: drop/retry; cert rotation test
+  - [ ] Observability: plugin.grpc.connect.ms, plugin.grpc.invoke.ms, plugin.grpc.error.count; attrs: plugin_id, method
+  - [ ] Security & Reliability: cert pinning; mTLS; endpoint allowlist; deny on cert mismatch
+  - [ ] Determinism & Concurrency: all I/O via proxy (captured); VirtualClock for timestamps; bounded concurrency per runner
+  - [ ] Rollback & Risk: feature flag grpc_runner=false; fallback to WASI runner only
+  - [ ] Artifacts & Repro: sample runner config; local CA/cert scripts; echo plugin
+  - [ ] Rules referenced: security-privacy.md; rust-standards.md; testing-validation.md; performance-optimization.md; observability.md
+- [ ] T-6b-E3-HOT-20 — Hot-reload + drain — AC: zero-downtime swap; state handoff; perf budgets; Deps: T-6b-E3-GRPC-19; Effort: 2d; Affected: plugin_host; Tests: integration; Docs: ops runbook; Risk: Med; Rollback: restart required.
+  - [ ] Framework: ToT (concurrency & lifecycle handoff)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: plugin lifecycle manager; connection pools; queue/backpressure
+    - [ ] Stratum 2: drain protocol; inflight accounting; idempotency; retry policy
+    - [ ] Stratum 3: state handoff format; WAL continuity; version pinning
+    - [ ] Stop when: swap runs with zero 5xx and no lost requests in test
+  - [ ] Checkpoint Gates: STOP if in-flight cancellation lacks replay; STOP before enabling in CI; STOP without signer re-verify
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: add drain endpoint; block new assigns; wait inflight; swap
+    - [ ] Local validation: two-version test; latency profile during swap; error budget checks
+    - [ ] Quality threshold: no data loss; bounded added latency
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Zero-downtime swap with inflight completion; state handoff validated
+    - [ ] Perf budgets: added p95 latency during swap ≤5 ms; peak RSS overhead during dual-run ≤10%
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p plugin_host --test hot_reload_* -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Optionally Loom tests for drain ordering; fault injection for failures
+  - [ ] Observability: plugin.hot_reload.count, plugin.drain.ms, plugin.swap.fail.count; attrs: plugin_id, version
+  - [ ] Security & Reliability: re-verify signatures/SBOM for new binary; rollback token; deny on mismatch
+  - [ ] Determinism & Concurrency: preserve request ordering; WAL stable; bounded concurrent swaps
+  - [ ] Rollback & Risk: revert to previous version; full restart if drain unstable
+  - [ ] Artifacts & Repro: ops runbook; scripts for blue/green swap
+  - [ ] Rules referenced: rust-standards.md; performance-optimization.md; testing-validation.md; observability.md; agentic-architecture.md; security-privacy.md
+- [ ] T-6b-E3-SBOM-21 — SBOM policy gates — AC: SPDX/CycloneDX parsed; deny on missing; Deps: T-6a-E3-SEC-04; Effort: 1.5d; Affected: plugin_host; Tests: unit; Docs: SBOM reqs; Risk: Med; Rollback: warn-only.
+  - [ ] Framework: ReAct (SBOM parse+verify integration with manifest verification)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: crates/plugin_host manifest verification path; cosign/Sigstore SBOM fields
+    - [ ] Stratum 2: SPDX/CycloneDX JSON parsers; mapping to required components
+    - [ ] Stratum 3: policy gate wiring: deny on missing/invalid; size bounds; offline mode
+    - [ ] Stop when: valid SBOM passes and missing/invalid is denied with audit
+  - [ ] Checkpoint Gates: STOP before trusting network; offline parse only; cap SBOM size; deny on parse error
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: add SBOM parsing step after signature verify; emit audit; gate load on verdict
+    - [ ] Local validation: positive/negative fixtures; golden audit records
+    - [ ] Quality threshold: 100% denial on invalid/missing SBOM
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] SPDX and CycloneDX supported (JSON); unknown → deny
+    - [ ] Perf budgets: parse ≤20 ms p95 for 1 MiB SBOM; memory ≤8 MiB
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p plugin_host -- --nocapture; cargo clippy -p plugin_host -D warnings; cargo fmt --check
+    - [ ] Fixtures: valid/invalid SBOMs; tampered component lists
+  - [ ] Observability: plugin.sbom.parse.ms, plugin.sbom.verdict.count{allow,deny}
+  - [ ] Security & Reliability: no network fetch; digest pin SBOM; enforce MIME; limit size
+  - [ ] Determinism & Concurrency: stable parse; deterministic component ordering in audit
+  - [ ] Rollback & Risk: warn-only mode flag sbom_enforce=false
+  - [ ] Artifacts & Repro: SBOM fixture set; audit samples
+  - [ ] Rules referenced: security-privacy.md; testing-validation.md
+
+### E2 — Governance Adapters
+#### crates/policy + plugins
+- [ ] T-6b-E2-IMG-22 — Image safety adapters via plugins — AC: CHILD_SAFETY/SEXUAL/VIOLENCE/EXTREMISM; deterministic capture; perf budgets; Deps: T-6b-E3-GRPC-19; Effort: 3d; Affected: policy,plugin_host; Tests: integration; Docs: config; Risk: High; Rollback: heuristics-only.
+  - [ ] Framework: ToT (policy adapter contracts)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: policy taxonomy; adapter interface; plugin_host invoke path
+    - [ ] Stratum 2: thresholds/confidence; route-to-human policy; WAL decision fields
+    - [ ] Stratum 3: redaction at egress; error handling (deny on error); caching semantics
+    - [ ] Stop when: adapter decisions feed governance with deterministic capture
+  - [ ] Checkpoint Gates: STOP on classifier error → deny; STOP on high latency; STOP before enabling by default
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: implement single adapter; wire thresholds; report to policy
+    - [ ] Local validation: mock adapter integration; golden decisions; threshold property tests
+    - [ ] Quality threshold: stable outcomes across runs with fixed seeds
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Adapters for key categories; decisions routed with audit
+    - [ ] Perf budgets: adapter call ≤250 ms p95; overhead ≤7% p95 on governed flows
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p policy --test adapters_* -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Integration: fake plugin via gRPC; WAL golden decision records
+  - [ ] Observability: governance.adapter.ms, adapter.result.count{allow,deny,flag}, adapter.error.count; attrs: category, adapter
+  - [ ] Security & Reliability: signed adapters; PII redaction; deny on adapter error
+  - [ ] Determinism & Concurrency: fixed seeds for heuristics; input digests; stable thresholds
+  - [ ] Rollback & Risk: disable adapters; fallback to heuristics-only path
+  - [ ] Artifacts & Repro: adapter config examples; sample plugin; golden outcomes
+  - [ ] Rules referenced: security-privacy.md; agentic-architecture.md; testing-validation.md; performance-optimization.md; observability.md
+- [ ] T-6b-E2-TOX-23 — Toxicity/text adapter parity — AC: confidence thresholds; route-to-human; Deps: T-6a-E2-POL-05; Effort: 2d; Affected: policy; Tests: integration; Docs: playbooks; Risk: Med; Rollback: disable.
+  - [ ] Framework: ToT (adapter parity and governance integration)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: policy taxonomy and thresholds; adapter trait; route-to-human rules
+    - [ ] Stratum 2: confidence calibration; WAL decision fields; redaction hooks
+    - [ ] Stratum 3: error handling (deny on error); caching of adapter responses
+    - [ ] Stop when: adapter decisions deterministically drive policy outcomes
+  - [ ] Checkpoint Gates: STOP on classifier error → deny; STOP on uncalibrated thresholds
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: single toxicity adapter; config thresholds; policy wiring
+    - [ ] Local validation: mock adapter; golden decisions at threshold boundaries
+    - [ ] Quality threshold: stable outcomes with fixed seeds
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Categories mapped; route-to-human path exercised
+    - [ ] Perf budgets: adapter call ≤200 ms p95; governance overhead ≤5% p95
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p policy --test adapters_toxicity_* -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Property tests for threshold monotonicity
+  - [ ] Observability: adapter.toxicity.ms, adapter.result.count{allow,deny,flag}, adapter.error.count
+  - [ ] Security & Reliability: redact PII; deny on adapter error; timeouts 500 ms default
+  - [ ] Determinism & Concurrency: fixed seeds; input digests; stable thresholds
+  - [ ] Rollback & Risk: disable adapter flag toxicity_adapter_enabled=false
+  - [ ] Artifacts & Repro: sample config; golden outcomes
+  - [ ] Rules referenced: security-privacy.md; testing-validation.md; observability.md; performance-optimization.md
+- [ ] T-6b-E2-RT-24 — Risk-tiered opt-in mode — AC: policy switch; audit on overrides; Deps: prior E2 tasks; Effort: 1.5d; Affected: policy; Tests: unit; Docs: admin; Risk: Med; Rollback: strict-default.
+  - [ ] Framework: CoT (policy switch and precedence)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: governance policy struct; config schema; tenant overrides
+    - [ ] Stratum 2: precedence model; audit event schema for overrides
+    - [ ] Stratum 3: roll-forward/back strategy; default strict path
+    - [ ] Stop when: opt-in tier toggles deterministically and auditable per tenant
+  - [ ] Checkpoint Gates: STOP on ambiguous floors; fail-closed on config error
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: add risk_tier policy flag; gate E2 rules accordingly; emit audit
+    - [ ] Local validation: unit tests for precedence; golden audit samples
+    - [ ] Quality threshold: strict-default preserved when disabled
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Opt-in mode per tenant; audited overrides
+    - [ ] Perf budgets: policy eval ≤5 ms p95 per decision
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p policy --test risk_tier_* -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Property tests for precedence/monotonicity
+  - [ ] Observability: policy.risktier.enabled.count, policy.override.audit.count
+  - [ ] Security & Reliability: deny on invalid/unknown tier; bounded config sizes
+  - [ ] Determinism & Concurrency: stable merge order; fixed seed tests
+  - [ ] Rollback & Risk: revert to strict default; ignore tenant overrides
+  - [ ] Artifacts & Repro: risk_tier.yaml examples; audit fixtures
+  - [ ] Rules referenced: security-privacy.md; testing-validation.md
+
+### E4 — Multimodal Integrations
+#### crates/orchestrator + blob_store + plugins
+- [ ] T-6b-E4-AUD-25 — Audio streaming + gRPC + resumable — AC: chunking; backpressure; perf budgets; Deps: T-6a-E4-BS-06, T-6a-SDK-10; Effort: 3d; Affected: orchestrator,blob_store; Tests: integration+property; Docs: SDK; Risk: Med; Rollback: disable streaming.
+  - [ ] Framework: SCoT (streaming performance & resilience)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: orchestrator streaming path; SDK upload/resume; blob chunking
+    - [ ] Stratum 2: backpressure signals; retry/resume semantics; WAL chunk digests
+    - [ ] Stratum 3: resource bounds (per-stream mem, max inflight); timeouts; rate limits
+    - [ ] Stop when: end-to-end audio stream with resume passes tests
+  - [ ] Checkpoint Gates: STOP before enabling globally; STOP on missing backpressure; STOP on OOM risk
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: define chunk size; implement upload→blob; add resume tokens
+    - [ ] Local validation: failure injection (drop/churn); resume correctness; ordering guarantees
+    - [ ] Quality threshold: sustained throughput with bounded latency and memory
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Chunking with backpressure and resume supported
+    - [ ] Perf budgets: sustained ≥40 MB/s; chunk ack p95 ≤50 ms; per-stream mem ≤32 MiB
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p orchestrator --test audio_stream_* -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Property tests for resume/ordering; jitter simulation
+  - [ ] Observability: audio.stream.bytes, audio.chunk.ack.ms, backpressure.engaged.count, stream.resume.count; attrs: tenant_id, codec
+  - [ ] Security & Reliability: mTLS; content scanning (MIME allowlist); quotas; deny on config error
+  - [ ] Determinism & Concurrency: stable chunk order; VirtualClock; recorded digests
+  - [ ] Rollback & Risk: disable streaming flag; fallback to single-upload path
+  - [ ] Artifacts & Repro: manifests; SDK examples; jitter harness
+  - [ ] Rules referenced: performance-optimization.md; testing-validation.md; rust-standards.md; observability.md
+- [ ] T-6b-E4-TR-26 — Transcription plugin path — AC: audio→text; governance applied; Deps: T-6b-E4-AUD-25, T-6b-E2-TOX-23; Effort: 2d; Affected: plugin_host,policy; Tests: integration; Docs: config; Risk: Med; Rollback: text-only.
+  - [ ] Framework: ToT (streaming → transcription → governance pipeline)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: audio streaming (AUD-25); plugin_host invoke; policy ingestion
+    - [ ] Stratum 2: chunking/transcript segments; WAL capture; redaction before policy
+    - [ ] Stratum 3: error/timeout handling; resume semantics
+    - [ ] Stop when: end-to-end audio→text→policy test passes
+  - [ ] Checkpoint Gates: STOP on missing backpressure; STOP on unredacted PII in transcript
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: stub transcription plugin; map segments to policy input; apply toxicity policy
+    - [ ] Local validation: fake plugin; golden transcript; threshold tests
+    - [ ] Quality threshold: stable segmentation; bounded latency
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Transcript stored via BlobRef; governance applied; audit emitted
+    - [ ] Perf budgets: per-segment invoke ≤500 ms p95; memory ≤16 MiB per stream
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p plugin_host --test transcribe_* -- --nocapture; cargo test -p policy -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Failure injection: dropped chunks; timeout
+  - [ ] Observability: transcribe.invoke.ms, transcribe.segment.count, policy.route_to_human.count
+  - [ ] Security & Reliability: mTLS; MIME allowlist; quotas; deny on plugin error
+  - [ ] Determinism & Concurrency: fixed seeds; segment ordering stable; recorded digests
+  - [ ] Rollback & Risk: disable transcribe flag; text-only fallback path
+  - [ ] Artifacts & Repro: fixtures (audio, transcripts); config samples
+  - [ ] Rules referenced: security-privacy.md; testing-validation.md; performance-optimization.md; observability.md
+- [ ] T-6b-E4-IMG-27 — Image thumbnail tool plugin — AC: Artifact→thumbnail; Deps: T-6a-E4-ORCH-07; Effort: 1.5d; Affected: plugin_host; Tests: unit; Docs: usage; Risk: Low; Rollback: disable tool.
+  - [ ] Framework: CoT (tool plugin: deterministic image downscale)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: tool plugin interface; BlobRef ingest; MIME helpers
+    - [ ] Stratum 2: downscale algorithm and params; WAL output capture
+    - [ ] Stratum 3: limits (max input size); deterministic resampling
+    - [ ] Stop when: same input → same thumbnail digest
+  - [ ] Checkpoint Gates: STOP on unknown MIME; STOP on oversized images; cap output dims
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: implement nearest-neighbor/bilinear deterministic resize
+    - [ ] Local validation: golden image pairs; digest equality tests
+    - [ ] Quality threshold: zero nondeterministic differences
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Thumbnail creation for PNG/JPEG/WebP; fixed parameters
+    - [ ] Perf budgets: ≤50 ms p95 for 2 MP image; memory ≤8 MiB
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p plugin_host --test tool_thumbnail_* -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Golden outputs committed (small)
+  - [ ] Observability: tool.thumbnail.ms, tool.thumbnail.bytes
+  - [ ] Security & Reliability: strip EXIF; limit dimensions; deny on decode error
+  - [ ] Determinism & Concurrency: fixed kernel/order; single-threaded or deterministic parallel chunks
+  - [ ] Rollback & Risk: disable tool flag
+  - [ ] Artifacts & Repro: fixtures; example usage
+  - [ ] Rules referenced: testing-validation.md; rust-standards.md; performance-optimization.md; observability.md
+- [ ] T-6b-E4-PDF-28 — PDF text extraction plugin — AC: robust MIME handling; Deps: T-6a-E4-ORCH-07; Effort: 2d; Affected: plugin_host; Tests: integration; Docs: usage; Risk: Med; Rollback: disable tool.
+  - [ ] Framework: CoT (parser adapter with bounds and determinism)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: plugin tool interface; PDF parsing lib API; MIME helpers
+    - [ ] Stratum 2: page-order, text normalization; WAL capture of extract summary
+    - [ ] Stratum 3: size/time bounds; sandboxing strategy
+    - [ ] Stop when: multi-page PDFs extract deterministically
+  - [ ] Checkpoint Gates: STOP on oversized PDFs; STOP on external font fetch; cap pages/time
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: extract text only; normalize whitespace; per-page loop
+    - [ ] Local validation: golden extracted text; multi-page fixtures
+    - [ ] Quality threshold: stable normalized text
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] MIME allowlist; multi-page support; normalized output committed
+    - [ ] Perf budgets: ≤100 ms p95 per 5 pages; memory ≤64 MiB
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p plugin_host --test tool_pdf_extract_* -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Fixtures with images, fonts, edge cases
+  - [ ] Observability: tool.pdf.extract.ms, tool.pdf.pages
+  - [ ] Security & Reliability: sandbox; no external fetch; deny on parse error
+  - [ ] Determinism & Concurrency: stable page order; deterministic normalization
+  - [ ] Rollback & Risk: disable tool flag
+  - [ ] Artifacts & Repro: fixtures; example usage
+  - [ ] Rules referenced: testing-validation.md; rust-standards.md; performance-optimization.md; observability.md
+- [ ] T-6b-SDK-29 — SDK streaming/resume support — AC: Py/TS resumable uploads; inline warn; Deps: T-6b-E4-AUD-25; Effort: 2d; Affected: sdk/python, sdk/ts; Tests: e2e; Docs: examples; Risk: Med; Rollback: disable resume.
+  - [ ] Framework: ToT (client API design across Py/TS; resumable semantics)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: sdk/python and sdk/ts layout; existing artifact APIs; AUD-25 streaming shape
+    - [ ] Stratum 2: resumable protocol (session id, chunk size, offset, idempotency key); retry/backoff
+    - [ ] Stratum 3: capture/audit fields; PII redaction; progress callbacks; error taxonomy mapping
+    - [ ] Stop when: drop+resume e2e passes (digest equality; no dup/miss)
+  - [ ] Checkpoint Gates: STOP on missing idempotency; STOP before enabling auto-resume by default; cap chunk size
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: UploadSession client with chunked put; resume via session id; inline warnings on fallback
+    - [ ] Local validation: loopback to AUD-25; simulate mid-stream drop; verify resume and final digest
+    - [ ] Quality threshold: zero data loss/duplication; consistent API across Py/TS
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Python/TS APIs: start/resume/abort; progress callback; inline warn on fallback to single-upload
+    - [ ] Perf budgets: client overhead ≤5% CPU vs raw stream; mem ≤32 MiB during upload; chunk default 1 MiB
+  - [ ] Testing & Validation
+    - [ ] Python: pytest -q sdk/python/tests/test_stream_resume.py::test_resume
+    - [ ] TypeScript: pnpm -C sdk/ts test -t "stream resume"
+    - [ ] Lint/type: ruff/mypy; tsc --noEmit
+  - [ ] Observability: sdk.stream.bytes, sdk.stream.retries, sdk.stream.resume.count; attrs: lang, chunk_bytes
+  - [ ] Security & Reliability: TLS/mTLS per transport; size bounds; idempotency keys; redact logs; timeouts/backoff
+  - [ ] Determinism & Concurrency: fixed chunking; ordered commits; deterministic retries; stable digests
+  - [ ] Rollback & Risk: resume_enabled=false; fallback to single-upload
+  - [ ] Artifacts & Repro: examples (Py/TS); golden digests; failure-injection harness
+  - [ ] Rules referenced: testing-validation.md; python-standards.md; typescript-standards.md; security-privacy.md; observability.md
+
+### Cross-Cutting (Phase 6b)
+- [ ] T-6b-PERF-30 — Perf benchmarks + CI gates — AC: micro+macro; fail on >5% regression; Deps: 6a done; Effort: 2d; Affected: benches/, CI; Tests: perf CI; Docs: manifests; Risk: Med; Rollback: notify-only.
+  - [ ] Framework: SCoT (system-wide perf harness + CI budget gates)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: existing benches/ and Criterion usage; CI workflows
+    - [ ] Stratum 2: select hot paths (event_log append/read, plugin invoke, blob put/get)
+    - [ ] Stratum 3: baseline JSON/CSV format; variance controls; gating thresholds
+    - [ ] Stop when: CI fails on >5% regression p95 vs baseline
+  - [ ] Checkpoint Gates: STOP on noisy env; pin tool versions; serialize perf job
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: add micro-benches per crate + macro scenario; commit baseline
+    - [ ] Local validation: run benches twice; verify stability (<3% stdev)
+    - [ ] Quality threshold: reproducible within 95% CI; documented seeds/params
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Micro: wal.append.ms, blob.put.ms, plugin.invoke.ms
+    - [ ] Macro: e2e run with capture on; overhead ≤10–15%
+    - [ ] Gate: CI fails on >5% regression (CPU/latency/bytes) without waiver
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo bench -p event_log -p plugin_host -p orchestrator; cargo bench -p blob_store
+    - [ ] CI: upload baseline; compare; fail on delta; cargo clippy -D warnings; cargo fmt --check
+  - [ ] Observability: ci.perf.run.ms, ci.perf.regression.count, bench.variant.count; attrs: crate, test
+  - [ ] Security & Reliability: no secrets; pin action SHAs; stable runners; timeouts
+  - [ ] Determinism & Concurrency: fixed seeds; warmup; isolated CPU; single-threaded benchmarks unless otherwise specified
+  - [ ] Rollback & Risk: switch to warn-only via perf_waiver; require doc + approval
+  - [ ] Artifacts & Repro: baseline JSON/CSV; bench harness; CI workflow snippet
+  - [ ] Rules referenced: performance-optimization.md; testing-validation.md; rust-standards.md
+- [ ] T-6b-SEC-31 — Threat model updates & fuzzers — AC: per-runner/BlobStore tm; fuzz chunking/hostcalls; Deps: components; Effort: 2d; Affected: security docs; Tests: fuzz CI; Docs: tm; Risk: Med; Rollback: disable fuzz.
+  - [ ] Framework: First Principles + ToT (threat modeling + fuzz/property tests)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: runners (Wasmtime, gRPC), blob_store APIs, hostcalls catalog
+    - [ ] Stratum 2: STRIDE mapping; prior incidents; fuzz targets (parsers, chunking, hostcall inputs)
+    - [ ] Stratum 3: CI integration of fuzz smoke; corpus seeding; crash triage workflow
+    - [ ] Stop when: TM doc updated; fuzzers run in CI and produce 0 crashes in smoke
+  - [ ] Checkpoint Gates: STOP before long fuzz jobs in CI; cap runtime; sanitize inputs; no secrets
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: proptest property tests + minimal libFuzzer target for blob chunk parser
+    - [ ] Local validation: reproduce seeded crashes; minimize; file bugs with evidence
+    - [ ] Quality threshold: properties cover invariants; fuzzers run 60s smoke without crashes
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Updated TM for plugin_host (runner, SBOM), orchestrator, blob_store
+    - [ ] Fuzzer targets: blob chunking, hostcall params; property tests for WAL/BlobRef
+    - [ ] CI job: fuzz smoke (≤2 min) on PRs; nightly extended optional
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test --workspace -E security -- --nocapture; cargo fuzz run blob_chunk -- -max_total_time=60
+    - [ ] Clippy/fmt gates; sanitizer job optional
+  - [ ] Observability: fuzz.crash.count, fuzz.exec.count, fuzz.time.ms; attrs: target
+  - [ ] Security & Reliability: sandbox fuzzers; resource caps; redact inputs in logs; deterministic seeds
+  - [ ] Determinism & Concurrency: fixed seeds for smoke; stable replay of crashes; single-writer logs
+  - [ ] Rollback & Risk: disable fuzz job; keep property tests; document waivers
+  - [ ] Artifacts & Repro: TM markdown update; fuzz corpus; minimized crash cases
+  - [ ] Rules referenced: testing-validation.md; rust-standards.md; security-privacy.md
+
+---
+
+## Phase 7 (Advanced; ~4–6 weeks) — Milestones M9–M12
+
+### E1 — Simulation Modes
+- [ ] T-7-E1-SIM-32 — Scenario runner + virtual time API — AC: scripted time; deterministic RNG; Deps: E1 base; Effort: 3d; Affected: orchestrator; Tests: integration; Docs: sim guide; Risk: Med; Rollback: hide feature.
+  - [ ] Framework: ToT (simulation architecture and virtual time contract)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: orchestrator time/clock abstractions; WAL timestamp fields; RNG usage sites
+    - [ ] Stratum 2: VirtualClock API (advance, now, sleep); seeded RNG; scenario DSL (steps, delays, faults)
+    - [ ] Stratum 3: record/replay interaction; disabling wall-clock; determinism metadata
+    - [ ] Stop when: same scenario run twice → identical WAL digests/ordering
+  - [ ] Checkpoint Gates: STOP before replacing wall clock globally; feature gated (sim_mode); deny real time in sim
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: introduce Clock trait + VirtualClock; scenario runner skeleton (advance, wait, inject)
+    - [ ] Local validation: unit tests for virtual time; integration scenario (submit, timeout, resume) with fixed seeds
+    - [ ] Quality threshold: deterministic across runs/hosts; no wall-clock usage on sim paths
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Scenario runner supports scripted time and deterministic RNG
+    - [ ] Perf budgets: scheduler overhead ≤1% CPU; VirtualClock ops ≤200 ns p95
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p orchestrator --test sim_* -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Golden WAL scenarios committed; replay parity asserts
+  - [ ] Observability: sim.run.ms, sim.clock.advance.count, sim.event.count; attrs: scenario_id
+  - [ ] Security & Reliability: sim mode denies external time sources; bounded steps; fail-closed on misuse
+  - [ ] Determinism & Concurrency: fixed seeds; stable ordering; single-writer WAL invariants preserved
+  - [ ] Rollback & Risk: hide feature behind sim_mode flag; default off
+  - [ ] Artifacts & Repro: scenario manifests; seeds; env manifest for sim runs
+  - [ ] Rules referenced: agentic-architecture.md; testing-validation.md; performance-optimization.md; observability.md
+
+### E2 — Compliance Evidence
+- [ ] T-7-E2-EVD-33 — SOC2 evidence pack automation — AC: ArtifactStored/Accessed trails; change controls; Deps: E2 obs; Effort: 3d; Affected: policy, event_log; Tests: integration; Docs: audit pack; Risk: Med; Rollback: manual packs.
+  - [ ] Framework: CoT (map controls → evidence; automate extraction)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: WAL event types (ArtifactStored/Accessed, policy_audit); observability counters
+    - [ ] Stratum 2: evidence schema (control → query → artifact); redaction policy; integrity checks
+    - [ ] Stratum 3: pack format (tar+manifest); signature; retention
+    - [ ] Stop when: pack builds deterministically and validates against schema
+  - [ ] Checkpoint Gates: STOP on unredacted PII; STOP if integrity check missing; offline-only generation
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: CLI to query WAL and emit pack with manifest; validate hashes
+    - [ ] Local validation: golden pack fixtures; schema verify; hash mismatch test
+    - [ ] Quality threshold: reproducible packs; zero PII leakage
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Evidence pack contains ArtifactStored/Accessed trails and change controls
+    - [ ] Perf budgets: pack build ≤2 min for 10k events; memory ≤256 MiB
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p event_log -E evidence -- --nocapture; cargo test -p policy -- --nocapture
+    - [ ] CLI smoke: target/debug/orca-evidence pack --from ... --to ... --verify
+  - [ ] Observability: evidence.pack.build.ms, evidence.item.count, evidence.verify.fail.count
+  - [ ] Security & Reliability: redaction enforced; manifests signed; immutable artifacts
+  - [ ] Determinism & Concurrency: stable ordering; locale/timezone independent timestamps (UTC)
+  - [ ] Rollback & Risk: fall back to manual pack; disable CLI behind feature
+  - [ ] Artifacts & Repro: sample packs; schema; verification logs
+  - [ ] Rules referenced: security-privacy.md; testing-validation.md; rust-standards.md
+- [ ] T-7-E2-GDPR-34 — DSAR erasure verification suite — AC: tombstone + rehash invalidation; Deps: E4 BlobStore; Effort: 2d; Affected: blob_store; Tests: integration; Docs: DSAR runbook; Risk: Med; Rollback: manual.
+  - [ ] Framework: First Principles (privacy) + CoT (verification harness)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: blob_store APIs (tombstone, rehash); WAL records; retention policies
+    - [ ] Stratum 2: index invalidation; cache behavior; link/reference graph
+    - [ ] Stratum 3: verification suite design (pre/post state checks)
+    - [ ] Stop when: erased artifact cannot be fetched; references scrubbed; hashes invalidated
+  - [ ] Checkpoint Gates: STOP on partial erasure; STOP if indices not updated; deny reads on tombstoned objects
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: implement tombstone + rehash invalidation; add verification CLI/tests
+    - [ ] Local validation: golden DSAR scenarios; simulate concurrent access
+    - [ ] Quality threshold: zero false negatives; documented limitations
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] DSAR suite passes: fetch denied; rehash invalid; audit recorded
+    - [ ] Perf budgets: erase ≤200 ms p95 per object; index update ≤50 ms
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p blob_store --test dsar_* -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Property tests: reference graph scrubbing
+  - [ ] Observability: dsar.erase.count, dsar.verify.ms, dsar.failure.count
+  - [ ] Security & Reliability: strict auth; redact IDs in logs; durability of tombstones
+  - [ ] Determinism & Concurrency: single-writer updates; WAL audit entries; deterministic ordering
+  - [ ] Rollback & Risk: manual DSAR runbook; disable rehash invalidation
+  - [ ] Artifacts & Repro: fixtures; DSAR runbook; golden audits
+  - [ ] Rules referenced: security-privacy.md; testing-validation.md; observability.md
+
+### E3 — Marketplace Readiness
+- [ ] T-7-E3-MKT-35 — Plugin catalog + isolation regression — AC: curated list; nightly isolation tests; Deps: E3 runners; Effort: 3d; Affected: plugin_host; Tests: integration; Docs: catalog; Risk: High; Rollback: remove catalog.
+  - [ ] Framework: ReAct (catalog curation + isolation regression harness)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: plugin manifests (sigstore, SBOM), runner types (WASI/gRPC)
+    - [ ] Stratum 2: isolation tests (FS/net caps), capability model, quotas
+    - [ ] Stratum 3: catalog metadata schema; publishing pipeline
+    - [ ] Stop when: catalog builds; nightly isolation suite runs and reports
+  - [ ] Checkpoint Gates: STOP on unsigned/unsbomed plugins; STOP on failing isolation tests
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: minimal catalog schema + 3 sample plugins; isolation smoke
+    - [ ] Local validation: run smoke on both runners; publish catalog doc
+    - [ ] Quality threshold: zero critical escapes; curated list documented
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Curated catalog published; nightly isolation tests green with report
+    - [ ] Perf budgets: catalog build ≤2 min; test suite ≤10 min
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p plugin_host --test isolation_* -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] CI: scheduled nightly job running isolation suite
+  - [ ] Observability: plugin.catalog.count, plugin.isolation.fail.count, plugin.isolation.ms
+  - [ ] Security & Reliability: signatures/SBOM required; deny on missing caps; quarantine failures
+  - [ ] Determinism & Concurrency: stable test ordering; fixed seeds for randomized cases
+  - [ ] Rollback & Risk: unpublish catalog; restrict to first‑party only
+  - [ ] Artifacts & Repro: catalog JSON; nightly report; sample plugins
+  - [ ] Rules referenced: security-privacy.md; observability.md; testing-validation.md
+- [ ] T-7-E3-CAPS-36 — Policy caps + quotas for plugins — AC: per-plugin CPU/mem/IO quotas; Deps: E3 runners; Effort: 2d; Affected: plugin_host; Tests: unit; Docs: ops; Risk: Med; Rollback: caps off.
+  - [ ] Framework: CoT (quota enforcement design)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: plugin_host scheduler; resource metering hooks
+    - [ ] Stratum 2: quota policy schema; per-plugin limits; burst/steady windows
+    - [ ] Stratum 3: enforcement (deny/shed/slow); audit events
+    - [ ] Stop when: quotas enforce correctly with audit
+  - [ ] Checkpoint Gates: STOP on missing metrics; STOP if enforcement path nondeterministic
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: add counters + simple CPU/mem caps; unit tests
+    - [ ] Local validation: synthetic load; verify shed/deny with audit
+    - [ ] Quality threshold: bounded p95 latency impact (≤5 ms)
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Per-plugin CPU/mem/IO quotas enforced with audit records
+    - [ ] Perf budgets: meter overhead ≤2% CPU; memory counters ≤8 MiB
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p plugin_host --test quotas_* -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Property tests: throttling monotonicity
+  - [ ] Observability: plugin.quota.enforced.count, plugin.quota.shed.count
+  - [ ] Security & Reliability: deny on exceed; caps validated; tenant isolation
+  - [ ] Determinism & Concurrency: deterministic metering windows; stable decisions
+  - [ ] Rollback & Risk: caps off flag; revert to defaults
+  - [ ] Artifacts & Repro: ops doc; sample policies
+  - [ ] Rules referenced: security-privacy.md; testing-validation.md
+
+### E4 — Video + Cold Storage
+- [ ] T-7-E4-VID-37 — Video frame sampling plugin — AC: configurable fps; per-frame governance; Deps: E4 base; Effort: 3d; Affected: plugin_host; Tests: integration; Docs: usage; Risk: Med; Rollback: disable.
+  - [ ] Framework: CoT (deterministic frame sampling tool)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: tool plugin interface; video decode lib; MIME helpers
+    - [ ] Stratum 2: sampling schedule (fps, start offset); per-frame governance wiring; WAL capture
+    - [ ] Stratum 3: bounds (duration, resolution); sandboxing strategy
+    - [ ] Stop when: same input → same frames and governance outcomes
+  - [ ] Checkpoint Gates: STOP on unknown MIME; STOP on oversized video; cap output frames
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: fixed-fps sampler; output frames to BlobStore; invoke governance adapter per frame
+    - [ ] Local validation: golden frame hashes; threshold tests
+    - [ ] Quality threshold: stable frames; bounded latency
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Configurable fps; per-frame governance applied; audit emitted
+    - [ ] Perf budgets: per-frame sample ≤20 ms p95; memory ≤32 MiB
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p plugin_host --test tool_video_sample_* -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Fixtures: short MP4/WebM; golden frames
+  - [ ] Observability: tool.video.sample.ms, tool.video.frames.count, tool.video.error.count
+  - [ ] Security & Reliability: sandbox; no external fetch; deny on decode error
+  - [ ] Determinism & Concurrency: fixed sampling schedule; deterministic decode path
+  - [ ] Rollback & Risk: disable tool flag
+  - [ ] Artifacts & Repro: fixtures; example usage
+  - [ ] Rules referenced: testing-validation.md; rust-standards.md; performance-optimization.md; observability.md
+- [ ] T-7-E4-COLD-38 — Cold storage tier + lifecycle — AC: move >90d to cold; recall API; Deps: E4 BlobStore; Effort: 3d; Affected: blob_store; Tests: integration; Docs: lifecycle; Risk: Med; Rollback: stop moves.
+  - [ ] Framework: ToT (storage lifecycle architecture; tiered warm/cold design)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: blob_store metadata (created_at, last_accessed, size_bytes, mime); encryption-at-rest; WAL event types for store/move/recall
+    - [ ] Stratum 2: lifecycle rules (age >90d); scanner design; backpressure; recall flow; integrity (hash, size) and retention interaction
+    - [ ] Stratum 3: idempotent move protocol; deterministic scan order; atomic metadata updates; audit entries
+    - [ ] Stop when: old objects (>90d) move to cold; recall returns identical bytes and metadata; audits present
+  - [ ] Checkpoint Gates: STOP on missing/invalid metadata; STOP if encryption context changes; STOP if recall hash mismatch; moves paused on error
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: add object.tier (warm|cold); implement lifecycle scanner + move job; implement recall path; add audits
+    - [ ] Local validation: golden objects with known hashes; simulate move+recall; power-fail between steps; verify idempotency
+    - [ ] Quality threshold: zero data loss; identical hashes after recall; bounded scan overhead
+  - [ ] Acceptance Criteria (TDD):
+    - [ ] Objects with age>90d are moved to cold within policy window; recall API restores availability transparently
+    - [ ] Perf budgets: lifecycle scan ≤5% CPU; move throughput ≥60 MB/s sustained; recall metadata fetch ≤200 ms p95; memory ≤128 MiB
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p blob_store --test cold_* -- --nocapture; cargo clippy --workspace -D warnings; cargo fmt --all -- --check
+    - [ ] Integration: end-to-end move/recall; crash-recovery tests; golden file hashes
+  - [ ] Observability: cold.move.count, cold.bytes.moved, cold.scan.ms, cold.recall.ms, cold.error.count (attrs: tenant_id, mime_class)
+  - [ ] Security & Reliability: encryption preserved across tiers; immutable content-addressing; durable writes (fsync at checkpoints); deny reads during in-flight move
+  - [ ] Determinism & Concurrency: single-writer lifecycle updates; deterministic scan ordering; WAL audit entries for move/recall; stable serialization
+  - [ ] Rollback & Risk: feature-flag lifecycle_enabled; pause + drain; promote selected keys back to warm; document manual runbook
+  - [ ] Artifacts & Repro: lifecycle policy config; sample dataset; golden hashes; scanner logs; metrics snapshots
+  - [ ] Rules referenced: agentic-architecture.md; testing-validation.md; security-privacy.md; performance-optimization.md; observability.md
+  - [ ] Dependencies:
+    - [ ] Depends on #6 (T-6a-E4-BS-06)
+
+- [ ] T-7-E4-RET-39 — Retention verification toolchain — AC: reports by tenant/category; Deps: E2 retention; Effort: 2d; Affected: tooling; Tests: unit; Docs: ops; Risk: Low; Rollback: disable.
+  - [ ] Framework: CoT (verification harness mapping policies → evidence)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: retention policy defaults; WAL records relevant to retention (store/access/delete); blob_store metadata
+    - [ ] Stratum 2: report schema (tenant, category, policy_id, violations); redaction profile; integrity checks
+    - [ ] Stratum 3: CLI/automation flow; schedule; export formats (CSV/JSONL) with stable ordering
+    - [ ] Stop when: reports reproducibly reflect current policy state; violations computed deterministically
+  - [ ] Checkpoint Gates: STOP on PII leakage; STOP if policy lookup ambiguous; offline-only report generation
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: implement read-only queries; generate per-tenant report + violation summary; add schema validation
+    - [ ] Local validation: golden reports; inject boundary dates; simulate policy updates between runs
+    - [ ] Quality threshold: zero false positives; deterministic outputs across runs
+  - [ ] Acceptance Criteria (TDD):
+    - [ ] Reports list compliant/non-compliant objects by tenant/category with counts; violation rate computed correctly
+    - [ ] Perf budgets: build report for 100k objects ≤2 min; memory ≤256 MiB; I/O ≥50 MB/s
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p event_log -E retention -- --nocapture; cargo test -p blob_store --test retention_* -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Property tests: stable ordering; date boundary conditions
+  - [ ] Observability: retention.report.ms, retention.entities.count, retention.violation.count (attrs: tenant_id, category)
+  - [ ] Security & Reliability: redact tenant IDs as configured; read-only mode; integrity verified via hashes; no secret material in outputs
+  - [ ] Determinism & Concurrency: stable sort keys (tenant_id, object_id); UTC timestamps; fixed seeds in any sampling
+  - [ ] Rollback & Risk: disable CLI flag; fall back to manual audit checklist; document runbook
+  - [ ] Artifacts & Repro: golden reports; schema JSON; verification logs; sample datasets
+  - [ ] Rules referenced: testing-validation.md; performance-optimization.md; security-privacy.md; observability.md
+  - [ ] Dependencies:
+    - [ ] Depends on #14 (T-6a-E2-RET-14)
+
+
+### Cross-Cutting (Phase 7)
+- [ ] T-7-SEC-40 — External pen test & remediation — AC: report triage; SLA fixes; Deps: features complete; Effort: 3d; Affected: cross-cutting; Tests: regression; Docs: security; Risk: High; Rollback: disable risky features.
+  - [ ] Framework: ReAct (ingest → triage → remediate → regress)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: external report intake; CVSS/CWE mapping; affected modules
+    - [ ] Stratum 2: exploit proofs; configuration posture; policy gates; CI/security scanners
+    - [ ] Stratum 3: remediation plan (patch, config, policy); verification tests; backports
+    - [ ] Stop when: all critical/high closed with evidence; regression tests added
+  - [ ] Checkpoint Gates: STOP on unverified fix; STOP if remediation weakens fail-closed posture; change review required
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: add failing regression tests reproducing exploit; minimal fix; re-run
+    - [ ] Local validation: targeted tests; workspace tests; threat model delta
+    - [ ] Quality threshold: critical/high = 0 open; medium within SLA; no new warnings
+  - [ ] Acceptance Criteria (TDD):
+    - [ ] For each finding: linked PR with tests; evidence of fix; threat model updated
+    - [ ] Perf/SLO: policy checks remain ≤7% overhead; no >5% perf regression
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test --workspace --all-features -- --nocapture; cargo clippy --workspace -D warnings; cargo fmt --all -- --check
+    - [ ] Security regression suite: exploit reproduction tests; policy gates
+  - [ ] Observability: sec.vuln.open.count{sev}, sec.fix.lead_time.ms, sec.regress.fail.count (attrs: sev, area)
+  - [ ] Security & Reliability: deny-by-default remains; secrets redacted; RBAC unaffected; documented SLAs
+  - [ ] Determinism & Concurrency: fixes must not introduce nondeterminism; stable ordering in tests
+  - [ ] Rollback & Risk: feature flags for risky surfaces; hotfix backout plan; emergency policy tighten
+  - [ ] Artifacts & Repro: redacted reports; regression tests; PR links; evidence logs
+  - [ ] Rules referenced: security-privacy.md; testing-validation.md; observability.md
+  - [ ] Dependencies:
+    - [ ] Depends on #32, #33, #34, #35, #36, #37, #38, #39
+
+- [ ] T-7-REL-41 — Rollback drills & disaster recovery — AC: simulate plugin disable, blob outage, governance timeout; Deps: all; Effort: 2d; Affected: ops; Tests: game day; Docs: DR runbook; Risk: Med; Rollback: n/a.
+  - [ ] Framework: ToT (DR scenarios + replayable drills with sim mode)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: orchestrator failover hooks; WAL replay; feature flags; blob_store error modes; policy engine timeouts
+    - [ ] Stratum 2: runbooks for plugin disable, blob outage, governance timeout; RPO/RTO targets
+    - [ ] Stratum 3: drill orchestrator (scripted steps; virtual time; assertions); evidence capture
+    - [ ] Stop when: drills are reproducible; pass/fail criteria evaluated automatically; evidence archived
+  - [ ] Checkpoint Gates: STOP if drills mutate production; STOP without isolation; STOP if evidence not captured
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: implement two scripted drills; capture metrics; auto-pass/fail
+    - [ ] Local validation: run via sim_mode; inject faults; verify bounded recovery
+    - [ ] Quality threshold: deterministic; recovery within targets; zero residual side-effects
+  - [ ] Acceptance Criteria (TDD):
+    - [ ] Plugin disable drill and blob outage drill pass with evidence pack produced
+    - [ ] SLOs: recovery decisions ≤1 s p95; orchestrator overhead ≤3% during drills
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test -p orchestrator --test dr_* -- --nocapture; cargo clippy -D warnings; cargo fmt --check
+    - [ ] Replay validation: run with fixed seeds and compare WAL digests
+  - [ ] Observability: drill.run.count, drill.pass.count, drill.ms (attrs: drill_id, scenario_id)
+  - [ ] Security & Reliability: isolated env; no secret leakage; RBAC honored; cleanup hooks
+  - [ ] Determinism & Concurrency: virtual clock; fixed seeds; single-writer WAL maintained
+  - [ ] Rollback & Risk: drills disabled by default; opt-in via feature flag; emergency stop
+  - [ ] Artifacts & Repro: drill manifests; seeds; WAL excerpts; evidence packs; run logs
+  - [ ] Rules referenced: agentic-architecture.md; testing-validation.md; observability.md; rust-standards.md
+  - [ ] Dependencies:
+    - [ ] Depends on #17, #19, #20, #22, #23, #24, #25, #26, #27, #28, #29, #30, #31, #32, #33, #34, #35, #36, #37, #38, #39
+
+
+---
+
+## Global: Backward Compatibility & Migration
+- [ ] T-GB-BWC-42 — EnvelopeV2 optional attachments migration — AC: text-only flows unchanged; inline≤64KiB deprecation notice; auto-import; Deps: E4; Effort: 1.5d; Affected: orchestrator, SDKs; Tests: e2e; Docs: migration; Risk: Med; Rollback: keep inline.
+  - [ ] Framework: ToT (schema compatibility, migration path, SDK alignment)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: Current EnvelopeV2 schema; how inline attachments and BlobRef are serialized in orchestrator and SDKs
+    - [ ] Stratum 2: Read-path compatibility (accept inline attachments); Write-path policy (prefer BlobRef); auto-import strategy to blob_store
+    - [ ] Stratum 3: Deprecation notices; SDK feature flags; golden files for before/after; WAL replay invariants
+    - [ ] Stop when: readers transparently handle inline, writers prefer BlobRef (flag-controlled), and auto-import works deterministically
+  - [ ] Checkpoint Gates: STOP on schema-breaking change; STOP if serialization field order changes; STOP if text-only flows regress
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: add tolerant reader for inline attachments + config gate to prefer BlobRef on write
+    - [ ] Local validation: convert sample inline payloads → BlobRef via auto-import tool; confirm content-addressed digests stable
+    - [ ] Quality threshold: zero behavior change for text-only; migration completes with ≤1% failures on sample set with actionable logs
+  - [ ] Acceptance Criteria (TDD):
+    - [ ] Text-only flows unchanged (no attachment fields required)
+    - [ ] Inline≤64KiB produces deprecation warning; BlobRef preferred when flag enabled
+    - [ ] Auto-import ingests inline attachments to blob_store and rewrites references deterministically
+    - [ ] Perf budgets: migration/import adds ≤3% overhead to WAL append; memory overhead ≤32 MiB during batch import
+  - [ ] Testing & Validation
+    - [ ] Unit: serde round-trip old/new envelopes; writer policy gate tests
+    - [ ] Golden: before/after Envelope JSON examples; WAL fragments
+    - [ ] E2E: SDKs send inline attachments; orchestrator auto-imports to BlobRef; replay parity holds
+    - [ ] Commands: cargo test -p orchestrator -E envelope_migration -- --nocapture; cargo test -p sdk_py -k test_inline_import
+  - [ ] Observability: migration.import.count, migration.warn.count, envelope.attach.inline.count, envelope.attach.blobref.count (attrs: size_bucket)
+  - [ ] Security & Reliability: sanitize metadata; encrypt at rest; rate-limit import; retry with backoff; do not log secrets; redact PII
+  - [ ] Determinism & Concurrency: stable hashing (sha256); single-writer WAL; fixed ordering of import operations; deterministic map from inline→BlobRef
+  - [ ] Rollback & Risk: feature flag to disable auto-import and continue reading inline; writer can revert to inline (temporary) while deprecation in effect
+  - [ ] Artifacts & Repro: migration manifest; sample envelopes (old/new); golden files; CLI/tool logs; seeds and env manifest
+  - [ ] Rules referenced: agentic-architecture.md; testing-validation.md; rust-standards.md
+- [ ] T-GB-FLAGS-43 — Feature flags & canaries — AC: flags per E1/E2/E3/E4; staged rollout; Deps: CI; Effort: 1.5d; Affected: config; Tests: unit; Docs: rollout; Risk: Low; Rollback: flip off.
+  - [ ] Framework: ToT + ReAct (flag system design + incremental rollout)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: Current config sources (file/env/CLI); existing feature toggles (if any); CI integration points
+    - [ ] Stratum 2: Enumerate flags for E1/E2/E3/E4 surfaces (determinism, governance, plugins, multimodal)
+    - [ ] Stratum 3: Canary strategy (percentage/ring), default posture (fail-closed), auditability requirements
+    - [ ] Stop when: all critical paths governed by flags with safe defaults and documented rollout steps
+  - [ ] Checkpoint Gates: STOP if any flag defaults to ON; STOP if gating breaks determinism; STOP if toggles are unaudited or unprotected
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: introduce typed flag registry + config parsing with safe defaults (all OFF)
+    - [ ] Local validation: toggle each flag in isolation and verify behavior + logs; CI smoke with flags OFF/ON matrix (small)
+    - [ ] Quality threshold: <1% overhead on gated hot paths; zero flaky toggles; audit log entries present
+  - [ ] Acceptance Criteria (TDD):
+    - [ ] Flags exist for key E1/E2/E3/E4 paths with OFF-by-default posture
+    - [ ] Canary mechanism supports staged rollout by ring/percentage with deterministic assignment
+    - [ ] CI job to validate flag matrix (subset) passes deterministically
+    - [ ] Perf: gating overhead ≤1% on control paths; config load ≤50 ms
+  - [ ] Testing & Validation
+    - [ ] Unit: flag parsing/validation; default OFF; ring assignment determinism (seeded)
+    - [ ] Integration: toggle tests per surface (orchestrator, policy, plugin_host, blob_store)
+    - [ ] Commands: cargo test --workspace -E feature_flags -- --nocapture; scripts/flags/smoke_matrix.sh --flags e1,e2,e3,e4
+  - [ ] Observability: flags.state.gauge{flag}; flags.toggle.count; gating.decision.count (attrs: flag, decision)
+  - [ ] Security & Reliability: RBAC or approver gate for changing flags; audit log of changes; fail-closed on parse/unknown flag
+  - [ ] Determinism & Concurrency: deterministic ring mapping (stable hash + seed); no time-based randomness on control paths
+  - [ ] Rollback & Risk: immediate flip-to-OFF supported; canaries limited in blast radius; documented runbook
+  - [ ] Artifacts & Repro: example config file; flag registry documentation; CI logs for flag matrix; seeds and env manifest
+  - [ ] Rules referenced: testing-validation.md; rust-standards.md; observability.md
+- [ ] T-GB-RB-44 — Rollback procedures per high-risk change — AC: documented steps; automated toggles; Deps: per-feature; Effort: 1d; Affected: docs/scripts; Tests: runbook drills; Docs: rollback; Risk: High; Rollback: n/a.
+  - [ ] Framework: CoT + First Principles (risk-driven runbooks with automation)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: Identify high-risk changes (WAL/Envelope schema, policy engine, plugin host/runtime, blob_store)
+    - [ ] Stratum 2: Runbook structure: Preconditions → Steps → Validation → Backout → Evidence
+    - [ ] Stratum 3: Automation hooks (feature flags, CI toggles, migration tools); permissions and approvals
+    - [ ] Stop when: each high-risk area has a tested runbook and a minimal automation toggle
+  - [ ] Checkpoint Gates: STOP if no backup/snapshot; STOP if commands are destructive without dry-run; STOP if approver flow missing
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: provide a generic rollback template + one concrete runbook (e.g., enable/disable WAL v2 capture)
+    - [ ] Local validation: dry-run each step; simulate failure at N; verify idempotency and safe re-entry
+    - [ ] Quality threshold: drills pass with success rate 	100% in controlled env; evidence artifacts complete
+  - [ ] Acceptance Criteria (TDD):
+    - [ ] Per-feature runbook with prechecks, step-by-step actions, verification, and backout
+    - [ ] Automated toggles (flag/CI) for at least top 3 high-risk features
+    - [ ] Perf impact of toggling 	% on control paths; zero data loss in drills
+  - [ ] Testing & Validation
+    - [ ] Drills: execute runbooks for WAL v2, plugin host isolation mode, and SBOM gating
+    - [ ] Chaos: inject controlled failures mid-runbook; verify safe abort and backout
+    - [ ] Commands: scripts/rollback/dry_run.sh --feature wal_v2; scripts/rollback/drill.sh --feature plugin_isolation
+  - [ ] Observability: rollback.started.count, rollback.success.count, rollback.ms (attrs: feature_id, reason); audit events for approvals
+  - [ ] Security & Reliability: two-person approval; least-privilege credentials; audit logs; immutable evidence storage
+  - [ ] Determinism & Concurrency: snapshot + WAL checkpoint before changes; ordered actions; single-writer invariant preserved
+  - [ ] Rollback & Risk: classify risk (High/Med/Low) per change; limit blast radius; staged rollback when possible
+  - [ ] Artifacts & Repro: runbook templates; per-feature runbooks (MD); scripts; drill logs; approval records; environment manifest
+  - [ ] Rules referenced: testing-validation.md; security-privacy.md
+
+## Global: CI/CD, Perf, Security, Observability
+- [ ] T-GB-CI-45 — Coverage gates≥90% + warnings-as-errors — AC: enforced; Deps: 6a CI; Effort: 1d; Affected: CI; Tests: CI; Docs: contributor; Risk: Low; Rollback: relax thresholds.
+  - [ ] Framework: CoT (CI policy and gating config)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: current CI workflows; rust-toolchain; lint/test commands (clippy, fmt, test)
+    - [ ] Stratum 2: coverage tool (llvm-cov) integration; report parsing; thresholds per crate
+    - [ ] Stratum 3: gating semantics (hard fail vs allowlist); PR comment summary; artifact retention
+    - [ ] Stop when: warnings-as-errors and ≥90% coverage enforced with deterministic reports
+  - [ ] Checkpoint Gates: STOP if coverage computation nondeterministic; STOP on flaky tests; do not lower thresholds without approval
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: enable clippy -D warnings + fmt --check; add coverage job with report upload
+    - [ ] Local validation: run gates locally; compare coverage across two runs; ensure stable percent
+    - [ ] Quality threshold: zero clippy/fmt violations; coverage ≥90% overall; core crates ≥90%
+  - [ ] Acceptance Criteria (TDD):
+    - [ ] CI fails on any clippy warning or format drift; coverage gates block merge if below threshold
+    - [ ] Perf: total CI time increase ≤10%; coverage step ≤4 min on std runner
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo clippy --workspace -D warnings; cargo fmt --all -- --check; cargo test --workspace --all-features -- --nocapture; cargo llvm-cov --workspace --lcov --output-path lcov.info
+  - [ ] Observability: ci.lint.fail.count, ci.coverage.percent, ci.duration.ms (attrs: job, crate)
+  - [ ] Security & Reliability: no secrets in logs; pinned toolchain; reproducible runners; cache safe paths
+  - [ ] Determinism & Concurrency: stable test ordering; fixed seeds; sort coverage inputs before aggregation
+  - [ ] Rollback & Risk: temporarily switch coverage gate to warn-only; retain logs; documented exception policy
+  - [ ] Artifacts & Repro: workflow YAML; lcov.info; HTML summary; PR coverage comment example
+  - [ ] Rules referenced: testing-validation.md
+  - [ ] Dependencies:
+    - [ ] Depends on #15 (T-6a-CI-15)
+    - [ ] Depends on #16 (T-6a-OBS-16)
+
+- [ ] T-GB-PERF-46 — Benchmark harness + regression guard — AC: micro/macro with manifests; Deps: features; Effort: 2d; Affected: benches; Tests: perf CI; Docs: manifests; Risk: Med; Rollback: notify-only.
+  - [ ] Framework: SCoT (performance harness + budgets + regression policy)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: existing benches (if any); Criterion config; representative datasets
+    - [ ] Stratum 2: baseline JSON/CSV format; comparison thresholds; CI job isolation
+    - [ ] Stratum 3: macro scenarios (orchestrator end-to-end); flamegraph optional; stability across runs
+    - [ ] Stop when: baselines committed; CI guard fails on >5% regressions with evidence
+  - [ ] Checkpoint Gates: STOP on unstable hardware/scheduling; STOP without baseline; STOP if variance too high (coefficient >5%)
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: add microbench for event_log serialize/append; record baseline; wire CI compare
+    - [ ] Local validation: 10-run mean/CI; synthetic load for plugin_host; macro smoke
+    - [ ] Quality threshold: noise <5%; guard only on stable benches
+  - [ ] Acceptance Criteria (TDD):
+    - [ ] CI fails on >5% regression (CPU, p95 latency, peak mem) vs baseline; PR shows delta table
+    - [ ] Perf budgets: harness overhead ≤3%; bench runtime per crate ≤2 min
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo bench -p event_log; cargo bench -p orchestrator; scripts/perf/compare_baseline.py --fail-on-regress 5
+  - [ ] Observability: perf.regress.fail.count, bench.runtime.ms, bench.mem.peak.bytes (attrs: crate, scenario)
+  - [ ] Security & Reliability: no network; fixed tool versions; pin governor; document environment
+  - [ ] Determinism & Concurrency: fixed seeds; stable datasets; single-writer WAL during macro benches
+  - [ ] Rollback & Risk: downgrade to notify-only; refresh baseline via approved workflow; annotate rationale
+  - [ ] Artifacts & Repro: baseline *.json/*.csv; compare logs; system manifest (CPU, freq, governor)
+  - [ ] Rules referenced: performance-optimization.md; testing-validation.md
+  - [ ] Dependencies:
+    - [ ] Depends on #30 (T-6b-PERF-30)
+    - [ ] Depends on #32–#37 (Phase 7 core deliverables)
+
+- [ ] T-GB-OBS-47 — Unified dashboards + SLOs — AC: blob/plugin/policy dashboards; alerts; Deps: metrics; Effort: 2d; Affected: observability; Tests: n/a; Docs: ops; Risk: Low; Rollback: disable alerts.
+  - [ ] Framework: ToT (observability model and SLOs)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: OTel metrics emitted by blob_store, plugin_host, orchestrator, policy
+    - [ ] Stratum 2: SLO definitions (availability, p95 latency, error budgets) per surface
+    - [ ] Stratum 3: dashboard JSONs; alert rules; low-cardinality attribute sets
+    - [ ] Stop when: dashboards render and SLOs alert correctly with synthetic load
+  - [ ] Checkpoint Gates: STOP on high-cardinality labels; STOP on PII in logs; STOP if alert fatigue
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: assemble blob/plugin/policy dashboards from existing metrics
+    - [ ] Local validation: replay sample metrics; verify panels/rules; run synthetic load to trigger alerts
+    - [ ] Quality threshold: zero noisy alerts; clear runbooks linked
+  - [ ] Acceptance Criteria (TDD):
+    - [ ] Dashboards for blob/plugin/policy; alerts for error rate, latency, backlog; SLO budgets documented
+    - [ ] Perf: metrics overhead ≤3%; dashboard loads ≤2 s
+  - [ ] Testing & Validation
+    - [ ] Commands: cargo test --workspace -E metrics -- --nocapture; scripts/obs/validate_dashboards.sh --fail-on-missing
+  - [ ] Observability: obs.dashboard.build.count, obs.alert.fire.count, obs.metrics.cardinality.count (attrs: surface)
+  - [ ] Security & Reliability: redact secrets; drop unknown attributes; head sampling respected
+  - [ ] Determinism & Concurrency: stable metric names; fixed attribute sets; deterministic alert thresholds
+  - [ ] Rollback & Risk: disable alerts; remove noisy panels; fallback to minimal dashboards
+  - [ ] Artifacts & Repro: dashboard JSON; alert rules; SLO doc; validation logs
+  - [ ] Rules referenced: observability.md; testing-validation.md; performance-optimization.md; security-privacy.md
+  - [ ] Dependencies:
+    - [ ] Depends on #16 (T-6a-OBS-16)
+    - [ ] Depends on #32–#37 (Phase 7 metrics surfaces)
+
+- [ ] T-GB-OBS-SDK-49 — SDK telemetry alignment (Py/TS) with server metrics and sampling policy — AC: Python/TS SDK metrics align with server metric names/units; sampling policy consistent; redaction hooks present; Deps: #16; Effort: 1.5d; Affected: sdk/python, sdk/ts, telemetry; Tests: unit+e2e metric validation; Risk: Low; Rollback: metrics-only mode.
+  - [ ] Framework: CoT (instrumentation alignment) + ToT (observability model)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: Current SDK telemetry/logging; server metrics naming per observability.md
+    - [ ] Stratum 2: Mapping for names/units/attrs (e.g., sdk.stream.bytes, sdk.stream.retries, sdk.artifact.upload.ms); sampling policy; redaction
+    - [ ] Stratum 3: In-memory/OTLP exporter harness; mapping tables; dashboards linkage
+    - [ ] Stop when: emitted SDK metrics match server names/units/attrs; sampling policy consistent; redaction verified
+  - [ ] Checkpoint Gates: STOP on high-cardinality labels; STOP if raw payloads leak; STOP if sampling undermines SLOs
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: add SDK interceptors/wrappers to emit aligned metrics
+    - [ ] Local validation: run sample Py/TS scripts; collect/export metrics; verify mapping tables
+    - [ ] Quality threshold: <1% overhead p95; low-cardinality attribute sets; zero secret leakage
+  - [ ] Acceptance Criteria (TDD)
+    - [ ] Python/TS clients emit metrics aligned with server names/units; attribute allowlist enforced; sampling policy documented and deterministic
+    - [ ] Perf budgets: client overhead ≤1% p95; exporter non-blocking
+  - [ ] Testing & Validation
+    - [ ] Python: pytest -q sdk/python/tests/test_metrics_alignment.py::test_alignment; ruff/mypy
+    - [ ] TypeScript: pnpm -C sdk/ts test -t "metrics alignment"; eslint/tsc --noEmit
+    - [ ] Integration: in-memory exporter asserts names/units/attrs
+  - [ ] Observability: sdk.stream.bytes, sdk.stream.retries, sdk.artifact.upload.ms (attrs: lang, chunk_bytes, sdk_version)
+  - [ ] Security & Reliability: redact secrets/PII; drop unknown attributes; bound label cardinality
+  - [ ] Determinism & Concurrency: deterministic sampling (fixed seeds where applicable); stable label ordering
+  - [ ] Rollback & Risk: disable SDK telemetry emit; metrics-only mode retained
+  - [ ] Artifacts & Repro: mapping table doc; example scripts; exporter harness; dashboards screenshots
+  - [ ] Rules referenced: observability.md; security-privacy.md; testing-validation.md; performance-optimization.md; python-standards.md; typescript-standards.md
+
+- [ ] T-GB-SEC-48 — SBOM & signature policy in CI — AC: verify on PR/build; Deps: E3; Effort: 1.5d; Affected: CI; Tests: CI; Docs: sec; Risk: Med; Rollback: warn-only.
+  - [ ] Framework: First Principles (supply chain) + ReAct (CI gating)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: SBOM generation options (CycloneDX for Cargo); plugin catalog signing (Cosign); digest pinning
+    - [ ] Stratum 2: CI verification step; policy allowlist/denylist; exception workflow
+    - [ ] Stratum 3: provenance attestations; artifact signing; storage of evidence
+    - [ ] Stop when: PRs/builds fail on missing/invalid SBOM/signature with clear diagnostics
+  - [ ] Checkpoint Gates: STOP on unredacted PII in SBOM; STOP if external calls unauthenticated; STOP without reproducible artifacts
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: generate CycloneDX SBOM for crates; add verify step; publish report artifact
+    - [ ] Local validation: run verify offline against sample SBOM; simulate invalid signature
+    - [ ] Quality threshold: <1% false positives; clear remediation guidance
+  - [ ] Acceptance Criteria (TDD):
+    - [ ] CI requires SBOM and valid signatures for release artifacts and catalog plugins
+    - [ ] Perf: verification step ≤3 min; cacheable across runs
+  - [ ] Testing & Validation
+    - [ ] Commands: scripts/ci/sbom_generate.sh; scripts/ci/sbom_verify.sh --strict; cargo test -p plugin_host -E sbom -- --nocapture
+  - [ ] Observability: ci.sbom.verify.fail.count, ci.sig.verify.ms, ci.sig.invalid.count (attrs: artifact_kind)
+  - [ ] Security & Reliability: fail-closed on verify errors; pinned digests; audited tool versions
+  - [ ] Determinism & Concurrency: sorted SBOM fields; stable hashes; single-writer evidence store
+  - [ ] Rollback & Risk: switch to warn-only; temporary allowlist with expiry; documented waiver trail
+  - [ ] Artifacts & Repro: sbom.json, attestations, signature logs, policy file
+  - [ ] Rules referenced: security-privacy.md; testing-validation.md
+  - [ ] Dependencies:
+    - [ ] Depends on #23 (T-6b-E3-SBOM-21)
+    - [ ] Depends on #35 (T-7-E3-MKT-35)
+
+
+## Code Review & Refactoring — Batch 1 (Orchestrator/Core/Policy)
+- [ ] T-CR-ORCH-01 — WAL event id seed + virtual clock injection — AC: event ids monotonic across restarts; virtual clock trait adopted; Deps: WAL v2; Effort: 1.5d; Affected: orca-core, orchestrator; Tests: replay parity; Docs: design; Risk: High; Rollback: flag off.
+  - [ ] Framework: ToT + CoT (determinism architecture + focused change)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: orca-core::ids::{next_monotonic_id, now_ms}; orchestrator::replay_on_start(); WAL JsonlEventLog::append
+    - [ ] Stratum 2: Verify current id source and replay init; identify need for max(id) seed and Clock trait
+    - [ ] Stratum 3: Introduce Clock trait with DefaultClock + VirtualClock; seed NEXT_ID from WAL max or migrate to WAL-assigned ids
+    - [ ] Stop when: restart preserves monotonic ids; timestamps sourced from Clock for record/replay
+  - [ ] Checkpoint Gates: STOP if WAL id ordering can regress; STOP if wall-clock remains on control path without capture
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: seed id on startup from WAL max id; inject Clock into orchestrator service
+    - [ ] Local validation: restart-run produces strictly increasing ids; replay parity stable
+    - [ ] Quality threshold: no ordering regressions; ≤1% overhead on hot paths
+  - [ ] Acceptance Criteria (TDD):
+    - [ ] On cold/warm restart, new event ids > previous max id
+    - [ ] Orchestrator uses Clock for ts_ms; simulation mode can override Clock
+    - [ ] Perf: additional WAL scan/seek ≤50 ms for 10k records; overhead ≤1% p95
+  - [ ] Testing & Validation
+    - [ ] Unit: seed from WAL; Clock trait; id monotonicity checks
+    - [ ] Integration: start→append→restart→append; ids strictly increasing
+    - [ ] Commands: cargo test -p orchestrator -E monotonic_ids -- --nocapture
+  - [ ] Observability: wal.append.ms, wal.flush.ms, orch.clock.now.count; attributes: run_id, wal_version
+  - [ ] Security & Reliability: fail-closed on seed failure; clear diagnostics; no secrets in logs
+  - [ ] Determinism & Concurrency: single-writer invariant; stable serialization order; virtual clock in replay
+  - [ ] Rollback & Risk: feature flag `use_virtual_clock`; disable to revert to wall-clock if needed
+  - [ ] Artifacts & Repro: design note; test logs; seeds; WAL fragments before/after
+  - [ ] Rules referenced: agentic-architecture.md; testing-validation.md; rust-standards.md
+
+- [ ] T-CR-ORCH-02 — Production error handling (remove unwraps, typed errors, reload observability) — AC: zero unwraps on control paths; Deps: none; Effort: 1d; Affected: orchestrator; Tests: failure injection; Docs: ops; Risk: Med; Rollback: revert specific sites.
+  - [ ] Framework: CoT (defensive hardening)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: OrchestratorService::new (policy reload loop); serde conversions; append_policy_audit
+    - [ ] Stratum 2: Identify unwraps and implicit defaults; map to typed errors (thiserror) and warnings
+    - [ ] Stratum 3: Add reload span + error counters; backoff with jitter on reload
+    - [ ] Stop when: no unwraps on control paths; reload loop instrumented and resilient
+  - [ ] Checkpoint Gates: STOP if panics remain; STOP if reload can spin on error without backoff
+  - [ ] Iterative Refinement Loop
+    - [ ] Smallest change: replace policy.write().unwrap() and serde unwraps with Results
+    - [ ] Local validation: corrupt policy file; verify fail-closed with audit
+    - [ ] Quality threshold: zero panics in negative tests
+  - [ ] Acceptance Criteria (TDD): typed errors; logs/spans for reload success/failure; backoff capped (≤5 min)
+  - [ ] Testing & Validation: cargo test -p orchestrator -E reload_hardening -- --nocapture
+  - [ ] Observability: agent.policy.reload.count{ok,fail}, agent.policy.reload.ms
+  - [ ] Security & Reliability: least privilege for file reads; do not log secrets; exponential backoff with jitter
+  - [ ] Determinism & Concurrency: reload guarded with write lock; no effect on record/replay ordering
+  - [ ] Rollback & Risk: revert to prior simple loop if instability observed
+  - [ ] Artifacts & Repro: failure fixture policy.yaml; logs; spans
+  - [ ] Rules referenced: testing-validation.md; observability.md; security-privacy.md
+
+- [ ] T-CR-ORCH-03 — AuthN header handling (Bearer + constant-time compare) — AC: strict Bearer parsing; CT compare; audit; Deps: none; Effort: 0.5d; Affected: orchestrator; Tests: auth; Docs: config; Risk: Med; Rollback: legacy compare.
+  - [ ] Framework: First Principles (auth) + CoT
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: check_auth implementation; env var AGENT_AUTH_TOKEN usage
+    - [ ] Stratum 2: Parse `Authorization: Bearer <token>`; treat missing/invalid as unauthenticated
+    - [ ] Stratum 3: constant-time compare (ring or subtle); audit span on failure (no token contents)
+    - [ ] Stop when: deny-by-default; no secrets in logs; tests cover cases
+  - [ ] Checkpoint Gates: STOP on timing leaks; STOP if logging sensitive values
+  - [ ] Iterative Refinement Loop: implement parser; add CT compare; add tests
+  - [ ] Acceptance Criteria (TDD): all malformed/missing headers denied; CT compare used; metrics incremented
+  - [ ] Testing & Validation: cargo test -p orchestrator -E auth_bearer -- --nocapture
+  - [ ] Observability: agent.auth.check.count{ok,fail}
+  - [ ] Security & Reliability: fail-closed; backoff not applicable; no PII
+  - [ ] Determinism & Concurrency: pure function; deterministic
+  - [ ] Rollback & Risk: environment flag `auth_legacy_compare=true` for quick rollback
+  - [ ] Artifacts & Repro: test vectors; logs
+  - [ ] Rules referenced: testing-validation.md
+
+- [ ] T-CR-ORCH-04 — Envelope kind mapping to snake_case in RPC conversion — AC: agent_task/agent_result/agent_error strings consistent; Deps: core enums; Effort: 0.5d; Affected: orchestrator, orca-core; Tests: mapping; Docs: n/a; Risk: Low; Rollback: old mapping.
+  - [ ] Framework: CoT (API correctness)
+  - [ ] Context Retrieval: convert_envelope; core::envelope::MessageType serde snake_case
+  - [ ] Checkpoint Gates: STOP if breaking wire compatibility without flag
+  - [ ] Iterative Refinement Loop: add Display/Into<&str> snake_case or helper; update conversion
+  - [ ] Acceptance Criteria (TDD): roundtrip mapping verified; server/client agree on values
+  - [ ] Testing & Validation: cargo test -p orchestrator -E kind_snake_case -- --nocapture
+  - [ ] Observability: n/a (covered by existing spans)
+  - [ ] Security & Reliability: no impact
+  - [ ] Determinism & Concurrency: deterministic mapping
+  - [ ] Rollback & Risk: fall back to previous mapping guarded by feature flag
+  - [ ] Artifacts & Repro: unit tests; golden samples
+  - [ ] Rules referenced: testing-validation.md; rust-standards.md
+
+- [ ] T-CR-POL-01 — Policy engine typed errors + OTel instrumentation — AC: thiserror-based errors; spans/metrics; Deps: obs; Effort: 1d; Affected: policy; Tests: error paths; Docs: policy; Risk: Med; Rollback: prior errors.
+  - [ ] Framework: ToT (error model + instrumentation)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: Engine::load_from_yaml_path error strings; apply_rules_then_redact; check_tool_allowlist
+    - [ ] Stratum 2: Define PolicyError enum with codes; map callers to typed errors
+    - [ ] Stratum 3: Add spans `agent.policy.check` with attrs {rule, action, outcome}; counters for deny/modify/flag
+    - [ ] Stop when: all public fns return typed errors; baseline spans/metrics present
+  - [ ] Checkpoint Gates: STOP if panics remain (Regex::new unwrap acceptable only in tests)
+  - [ ] Iterative Refinement Loop: introduce error enum; incrementally update callers; add spans/metrics
+  - [ ] Acceptance Criteria (TDD): typed errors propagated; deny/modify counters visible; zero panics in library
+  - [ ] Testing & Validation: cargo test -p policy -- --nocapture; cargo clippy -p policy -D warnings
+  - [ ] Observability: policy.decision.count{deny,modify,allow_flag}; policy.rule.latency.ms
+  - [ ] Security & Reliability: no secrets; redaction preserved; fail-closed defaults
+  - [ ] Determinism & Concurrency: deterministic precedence; fixed rule ordering
+  - [ ] Rollback & Risk: retain string mapping behind feature flag if needed
+  - [ ] Artifacts & Repro: error docs; span/metric examples
+  - [ ] Rules referenced: observability.md; testing-validation.md; rust-standards.md; security-privacy.md
+
+---
+
+## Code Review & Refactoring — Batch 2 (EventLog/Telemetry/Budget/ReplayCLI)
+- [ ] T-CR-EL-01 — WAL append ordering + fsync checkpoints + max_id helper — AC: strict id monotonicity; fsync policy; fast read_max_id(); Deps: #11; Effort: 1d; Affected: event-log, orchestrator; Tests: ordering/fsync; Risk: High; Rollback: flag to disable fsync.
+  - [ ] Framework: ToT + CoT (WAL determinism + minimal changes)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: JsonlEventLog::{open,append,read_range}; no fsync; caller-supplied ids
+    - [ ] Stratum 2: Need ordering assertion, fsync checkpoints, max_id API
+    - [ ] Stratum 3: Add `read_max_id()`, `append_with_check()`; optional BufWriter; fsync every N appends or on `flush`
+    - [ ] Stop when: ordering enforced; fsync tunable; max_id O(n) acceptable now (opt later)
+  - [ ] Checkpoint Gates: STOP if fsync exceeds perf budgets; STOP if append can reorder
+  - [ ] Iterative Refinement Loop: add read_max_id; assert id>=last; add fsync policy; expose knobs via builder
+  - [ ] Acceptance Criteria (TDD): append rejects id < last; `read_max_id()` returns last id; fsync on-demand; perf overhead ≤3% p95
+  - [ ] Testing & Validation: unit (ordering, fsync flag); integration (append/read_range/max_id); `cargo test -p event-log -- --nocapture`
+  - [ ] Observability: wal.append.ms, wal.flush.ms, wal.fsync.ms; attrs: wal_version, file_path_hash
+  - [ ] Security & Reliability: correct file perms; handle IO errors fail-closed; no secrets in logs
+  - [ ] Determinism & Concurrency: single-writer invariant; stable serialization; fsync at checkpoints
+  - [ ] Rollback & Risk: feature flag `wal_fsync_checkpoints`; disable to revert prior behavior
+  - [ ] Artifacts & Repro: golden JSONL samples; perf notes; toggle matrix
+  - [ ] Rules referenced: agentic-architecture.md; rust-standards.md; testing-validation.md; performance-optimization.md; observability.md; security-privacy.md
+
+- [ ] T-CR-TEL-01 — OTel tracer/subscriber hookup + redaction + is_initialized — AC: tracer active; attribute allowlist; redaction hooks; `is_initialized` truthful; Deps: #16; Effort: 1d; Affected: telemetry; Tests: init/metrics; Risk: Med; Rollback: feature-gated.
+  - [ ] Framework: ToT (observability policy) + CoT (wiring)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: init_json_logging (no error path); init_otel (no subscriber hookup); metrics attrs ignored
+    - [ ] Stratum 2: Add subscriber hook for OTel; redaction layer; attribute allowlist per observability.md
+    - [ ] Stratum 3: implement `is_initialized()` tracking; expose Budget metrics attrs (run_id, task.id)
+    - [ ] Stop when: tracer/subscriber wired; redaction tested; metrics carry low-cardinality attrs
+  - [ ] Checkpoint Gates: STOP if logs include secrets; STOP if cardinality explodes
+  - [ ] Iterative Refinement Loop: add layers; add tests; measure attr counts
+  - [ ] Acceptance Criteria (TDD): redaction verified; tracer export e2e; `is_initialized()==true` only after full init
+  - [ ] Testing & Validation: unit for redaction/allowlist; feature `otel` integration smoke; `cargo test -p telemetry -- --nocapture`
+  - [ ] Observability: agent.sdk.tool, agent.policy.check spans honored; metrics registry documented
+  - [ ] Security & Reliability: redact sensitive fields; env-driven OTLP; fail-closed on misconfig
+  - [ ] Determinism & Concurrency: logging deterministic formatting; no blocking in async paths
+  - [ ] Rollback & Risk: feature `otel` guards; env flag to bypass OTel
+  - [ ] Artifacts & Repro: sample traces/metrics; config examples
+  - [ ] Rules referenced: observability.md; testing-validation.md; security-privacy.md
+
+- [ ] T-CR-BUD-01 — Fail-closed budget defaults + telemetry hooks — AC: explicit config required or deny-by-default; counters exposed via telemetry; Deps: #16; Effort: 0.75d; Affected: budget, telemetry; Tests: limit logic; Risk: Med; Rollback: legacy permissive mode.
+  - [ ] Framework: First Principles (safety) + CoT
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: Manager::within_limits default allows None; relaxed atomics; no metrics emission
+    - [ ] Stratum 2: Introduce strict mode (default ON) where None => 0; builder for explicit opt-out
+    - [ ] Stratum 3: Integrate telemetry counters/gauges; expose status transitions
+    - [ ] Stop when: deny-by-default enforced; metrics available; docs updated
+
+
+  - [ ] Checkpoint Gates: STOP if breaking existing integrations without flag
+  - [ ] Iterative Refinement Loop: add strict mode + tests; add metrics; provide env/config switch
+  - [ ] Acceptance Criteria (TDD): strict mode denies when cfg missing; status transitions correct at 80/90/100%; perf unchanged ±5%
+  - [ ] Testing & Validation: unit/property tests for thresholds; `cargo test -p budget -- --nocapture`
+  - [ ] Observability: budget.state.count{within,w80,w90,exceeded}; budget.tokens.total; cost.total_micros
+  - [ ] Security & Reliability: fail-closed defaults; no PII; bounded counters
+  - [ ] Determinism & Concurrency: atomics remain relaxed; message passing recommended for integration
+  - [ ] Rollback & Risk: env flag `BUDGET_STRICT=false` restores permissive behavior
+  - [ ] Artifacts & Repro: examples; env manifests
+  - [ ] Rules referenced: testing-validation.md; rust-standards.md; observability.md
+
+- [ ] T-CR-REPLAY-01 — Replay CLI validation + redaction flags — AC: `--validate` JSON schema + id monotonic check; `--redact` sensitive fields per policy; Deps: #11; Effort: 0.75d; Affected: replay-cli, event-log, policy; Tests: CLI; Risk: Low; Rollback: flags default off.
+  - [ ] Framework: CoT (CLI correctness) + ToT (security posture)
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: load_events/cmd_* lack schema validation/redaction; deterministic output test present
+    - [ ] Stratum 2: Add JSON Schema (WAL v2) validation; integrate policy redactor for payloads
+    - [ ] Stratum 3: Emit stable order; provide `--summary` counters; redact via allowlist patterns
+    - [ ] Stop when: `--validate` and `--redact` work; summaries emitted; deterministic output preserved
+  - [ ] Checkpoint Gates: STOP if redaction logs secrets; STOP if validation too slow (budget ≤100ms/10k)
+  - [ ] Iterative Refinement Loop: add schema; add flags; perf test on 10k records
+  - [ ] Acceptance Criteria (TDD): invalid records reported with codes; redacted fields hashed; perf within budget
+  - [ ] Testing & Validation: CLI tests (goldens); `cargo test -p replay-cli -- --nocapture`
+  - [ ] Observability: counters printed (validated, redacted); structured output optional
+  - [ ] Security & Reliability: no secrets in stdout unless opted; safe defaults
+  - [ ] Determinism & Concurrency: stable iteration; no parallelism needed
+  - [ ] Rollback & Risk: flags default OFF; hidden `--no-validate` override for debug
+  - [ ] Artifacts & Repro: sample WALs; redaction profiles
+  - [ ] Rules referenced: agentic-architecture.md; testing-validation.md; security-privacy.md
+
+- [ ] T-CR-REPLAY-02 — Canonical JSON output + golden regression tests for replay outputs — AC: JSON output canonicalized (stable field order, locale-free); golden files committed; CI gate for drift; Deps: #57; Effort: 0.5d; Affected: replay-cli; Tests: golden regression suite; Risk: Low; Rollback: disable golden checks.
+  - [ ] Framework: CoT (CLI behavior) + testing-led hardening
+  - [ ] Context Retrieval
+    - [ ] Stratum 1: Deterministic output test exists; serializer default may vary in key order/float formatting
+    - [ ] Stratum 2: Introduce canonical serializer (stable key ordering; fixed float formatting; UTF-8; no locale)
+    - [ ] Stratum 3: Golden fixtures for representative WALs; CI check for drift; document policy
+    - [ ] Stop when: identical output across platforms/CI; goldens stable; drift surfaces in CI
+  - [ ] Checkpoint Gates: STOP on numeric formatting regressions; STOP if redaction is bypassed; STOP on performance >2% overhead
+  - [ ] Iterative Refinement Loop: add canonical writer; update tests; measure overhead; add CI target
+  - [ ] Acceptance Criteria (TDD): output byte-identical across runs/platforms; goldens pass; redaction maintained; perf ≤2% p95
+  - [ ] Testing & Validation: cargo test -p replay-cli -- --nocapture; add golden tests under crates/replay-cli/tests/goldens
+  - [ ] Observability: optional --stats output (counts, sizes) remains stable; log drift causes
+  - [ ] Security & Reliability: enforce redaction before serialization; no secrets in goldens; review test data
+  - [ ] Determinism & Concurrency: stable ordering; single-threaded write path
+  - [ ] Rollback & Risk: feature flag to bypass canonical writer; disable golden checks in CI if needed
+  - [ ] Artifacts & Repro: golden JSON files; serializer config doc; CI job logs
+  - [ ] Rules referenced: testing-validation.md; rust-standards.md; agentic-architecture.md; security-privacy.md; performance-optimization.md; observability.md
+
+
+## References & Traceability
+- Roadmap baseline: Docs/Roadmap.md (Phases 0–7; Phase 5 complete)
+- Specs: Docs/ORCA-Enhancement-Research-Directive.md (Enhancements 1–4)
+- Unified plan: Docs/ORCA-Enhancement-Unified-Roadmap.md (Milestones M1–M12)
+
+This TODO.md supersedes ad hoc task trackers. Update task states in PRs; keep acceptance criteria and dependencies current; ensure tests and docs are delivered with each task.
+
