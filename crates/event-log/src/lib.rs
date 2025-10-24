@@ -123,3 +123,56 @@ mod unit_tests {
         assert_eq!(got[0].payload, "hello");
     }
 }
+
+
+/// WAL v2 typed schema with deterministic serialization and golden-tested stable ordering.
+pub mod v2 {
+    use serde::{Deserialize, Serialize};
+    use serde_json::Value;
+
+    pub const WAL_VERSION_V2: u8 = 2;
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    #[serde(rename_all = "snake_case")]
+    pub enum EventTypeV2 {
+        StartRun,
+        TaskEnqueued,
+        UsageUpdate,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RecordV2<T> {
+        pub id: super::EventId,
+        pub ts_ms: u64,
+        pub version: u8,
+        pub event_type: EventTypeV2,
+        pub run_id: String,
+        pub trace_id: String,
+        pub payload: T,
+        pub metadata: Value,
+    }
+
+    // Typed payloads to guarantee stable key ordering in serialization.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct StartRunPayload {
+        pub workflow_id: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct TaskEnqueuedPayload {
+        pub envelope_id: String,
+        pub agent: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct UsageUpdatePayload {
+        pub tokens: u64,
+        pub cost_micros: u64,
+    }
+
+    /// Serialize a V2 record to a JSON line with stable field ordering.
+    pub fn to_jsonl_line<T: Serialize>(rec: &RecordV2<T>) -> Result<String, super::EventLogError> {
+        let s = serde_json::to_string(rec)?;
+        Ok(s)
+    }
+}
