@@ -152,10 +152,27 @@ pub mod v2 {
         pub metadata: Value,
     }
 
-    /// Serialize a V2 record to a JSON line (unimplemented in RED phase).
-    pub fn to_jsonl_line<T: Serialize>(_rec: &RecordV2<T>) -> Result<String, super::EventLogError> {
-        // Intentionally failing path for RED phase to drive TDD.
-        let e = serde_json::from_str::<serde_json::Value>("").unwrap_err();
-        Err(super::EventLogError::Serde(e))
+    // Typed payloads to guarantee stable key ordering in serialization.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct StartRunPayload {
+        pub workflow_id: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct TaskEnqueuedPayload {
+        pub envelope_id: String,
+        pub agent: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct UsageUpdatePayload {
+        pub tokens: u64,
+        pub cost_micros: u64,
+    }
+
+    /// Serialize a V2 record to a JSON line with stable field ordering.
+    pub fn to_jsonl_line<T: Serialize>(rec: &RecordV2<T>) -> Result<String, super::EventLogError> {
+        let s = serde_json::to_string(rec)?;
+        Ok(s)
     }
 }
