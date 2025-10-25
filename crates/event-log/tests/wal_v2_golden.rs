@@ -1,4 +1,7 @@
-use event_log::v2::{to_jsonl_line, EventTypeV2, RecordV2, StartRunPayload, TaskEnqueuedPayload, UsageUpdatePayload, WAL_VERSION_V2};
+use event_log::v2::{
+    to_jsonl_line, EventTypeV2, RecordV2, StartRunPayload, TaskEnqueuedPayload, UsageUpdatePayload,
+    WAL_VERSION_V2,
+};
 use serde_json::json;
 
 #[test]
@@ -44,4 +47,3 @@ fn wal_v2_sample_golden_red() {
     let expected = std::fs::read_to_string("tests/golden/wal_v2_sample.jsonl").unwrap();
     assert_eq!(got + "\n", expected);
 }
-

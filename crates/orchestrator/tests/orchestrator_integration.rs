@@ -1,8 +1,6 @@
 use event_log::JsonlEventLog;
 use futures_util::stream::StreamExt;
-use orchestrator::orca_v1::{
-    orchestrator_client::OrchestratorClient, *,
-};
+use orchestrator::orca_v1::{orchestrator_client::OrchestratorClient, *};
 use orchestrator::OrchestratorService;
 use serde_json::json;
 use tokio::net::TcpListener;

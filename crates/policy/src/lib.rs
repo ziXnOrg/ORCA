@@ -58,7 +58,9 @@ pub struct Rule {
 }
 
 impl Default for Engine {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Engine {
@@ -68,8 +70,12 @@ impl Engine {
         Self { pii, rules: Vec::new(), tool_allowlist: None }
     }
 
-    pub fn load_from_yaml_path<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<(), String> {
-        let f = File::open(&path).map_err(|e| format!("Failed to open policy file {:?}: {}", path.as_ref(), e))?;
+    pub fn load_from_yaml_path<P: AsRef<std::path::Path>>(
+        &mut self,
+        path: P,
+    ) -> Result<(), String> {
+        let f = File::open(&path)
+            .map_err(|e| format!("Failed to open policy file {:?}: {}", path.as_ref(), e))?;
         let rdr = BufReader::new(f);
         let pf: PolicyFile = serde_yaml::from_reader(rdr)
             .map_err(|e| format!("Malformed YAML in policy file {:?}: {}", path.as_ref(), e))?;
@@ -93,17 +99,27 @@ impl Engine {
 
         // Validate rules
         for (i, r) in pf.rules.iter().enumerate() {
-            if r.name.trim().is_empty() { return Err(format!("rules[{}].name must be non-empty", i)); }
-            if r.when.trim().is_empty() { return Err(format!("rules[{}].when must be non-empty", i)); }
+            if r.name.trim().is_empty() {
+                return Err(format!("rules[{}].name must be non-empty", i));
+            }
+            if r.when.trim().is_empty() {
+                return Err(format!("rules[{}].when must be non-empty", i));
+            }
             match r.action.as_str() {
                 "deny" | "modify" | "allow_but_flag" => {}
-                other => return Err(format!("rules[{}].action '{}' is invalid; valid: deny|modify|allow_but_flag", i, other)),
+                other => {
+                    return Err(format!(
+                        "rules[{}].action '{}' is invalid; valid: deny|modify|allow_but_flag",
+                        i, other
+                    ))
+                }
             }
             if let Some(t) = &r.transform {
                 let t = t.trim();
                 if let Some(rest) = t.strip_prefix("regex:") {
                     // Validate regex patterns if declared as transform: "regex:<pattern>"
-                    Regex::new(rest).map_err(|e| format!("rules[{}].transform regex invalid: {}", i, e))?;
+                    Regex::new(rest)
+                        .map_err(|e| format!("rules[{}].transform regex invalid: {}", i, e))?;
                 }
             }
         }
@@ -113,12 +129,22 @@ impl Engine {
         Ok(())
     }
 
-    pub fn pre_start_run(&self, envelope: &Value) -> Decision { self.apply_rules_then_redact(envelope, Some("pre_start_run")) }
+    pub fn pre_start_run(&self, envelope: &Value) -> Decision {
+        self.apply_rules_then_redact(envelope, Some("pre_start_run"))
+    }
 
-    pub fn pre_submit_task(&self, envelope: &Value) -> Decision { self.apply_rules_then_redact(envelope, Some("pre_submit_task")) }
+    pub fn pre_submit_task(&self, envelope: &Value) -> Decision {
+        self.apply_rules_then_redact(envelope, Some("pre_submit_task"))
+    }
 
     pub fn post_submit_task(&self, _result: &Value) -> Decision {
-        Decision { kind: DecisionKind::Allow, payload: None, reason: None, rule_name: None, action: None }
+        Decision {
+            kind: DecisionKind::Allow,
+            payload: None,
+            reason: None,
+            rule_name: None,
+            action: None,
+        }
     }
 
     fn apply_rules_then_redact(&self, envelope: &Value, _phase: Option<&str>) -> Decision {
@@ -141,22 +167,30 @@ impl Engine {
         for (idx, r) in self.rules.iter().enumerate() {
             match (r.action.as_str(), r.when.as_str()) {
                 ("deny", cond) if cond.contains("ToolInvocation") => {
-                    matches.push((r.priority, idx, Decision {
-                        kind: DecisionKind::Deny,
-                        payload: None,
-                        reason: r.message.clone(),
-                        rule_name: Some(r.name.clone()),
-                        action: Some(r.action.clone()),
-                    }));
+                    matches.push((
+                        r.priority,
+                        idx,
+                        Decision {
+                            kind: DecisionKind::Deny,
+                            payload: None,
+                            reason: r.message.clone(),
+                            rule_name: Some(r.name.clone()),
+                            action: Some(r.action.clone()),
+                        },
+                    ));
                 }
                 ("allow_but_flag", cond) if cond.contains("LLMPrompt") => {
-                    matches.push((r.priority, idx, Decision {
-                        kind: DecisionKind::Allow,
-                        payload: None,
-                        reason: r.message.clone(),
-                        rule_name: Some(r.name.clone()),
-                        action: Some(r.action.clone()),
-                    }));
+                    matches.push((
+                        r.priority,
+                        idx,
+                        Decision {
+                            kind: DecisionKind::Allow,
+                            payload: None,
+                            reason: r.message.clone(),
+                            rule_name: Some(r.name.clone()),
+                            action: Some(r.action.clone()),
+                        },
+                    ));
                 }
                 ("modify", cond) if cond.contains("pii_detect") => {
                     // apply redaction and attribute decision to this rule
@@ -171,32 +205,58 @@ impl Engine {
             }
         }
         if matches.is_empty() {
-            return Decision { kind: DecisionKind::Allow, payload: None, reason: None, rule_name: None, action: None };
+            return Decision {
+                kind: DecisionKind::Allow,
+                payload: None,
+                reason: None,
+                rule_name: None,
+                action: None,
+            };
         }
         let max_pri = matches.iter().map(|(p, _, _)| *p).max().unwrap_or(0);
         let mut best: Option<(i32, usize, Decision)> = None;
         for (p, idx, d) in matches.into_iter().filter(|(p, _, _)| *p == max_pri) {
-            let severity = match d.kind { DecisionKind::Deny => 3, DecisionKind::Modify => 2, DecisionKind::Allow => 1 };
+            let severity = match d.kind {
+                DecisionKind::Deny => 3,
+                DecisionKind::Modify => 2,
+                DecisionKind::Allow => 1,
+            };
             let better = match &best {
                 None => true,
                 Some((_bp, _bi, bd)) => {
-                    let bsev = match bd.kind { DecisionKind::Deny => 3, DecisionKind::Modify => 2, DecisionKind::Allow => 1 };
+                    let bsev = match bd.kind {
+                        DecisionKind::Deny => 3,
+                        DecisionKind::Modify => 2,
+                        DecisionKind::Allow => 1,
+                    };
                     severity > bsev // most-restrictive wins; ties keep first-match
                 }
             };
-            if better { best = Some((p, idx, d)); }
+            if better {
+                best = Some((p, idx, d));
+            }
         }
-        best.map(|(_, _, d)| d).unwrap_or(Decision { kind: DecisionKind::Allow, payload: None, reason: None, rule_name: None, action: None })
+        best.map(|(_, _, d)| d).unwrap_or(Decision {
+            kind: DecisionKind::Allow,
+            payload: None,
+            reason: None,
+            rule_name: None,
+            action: None,
+        })
     }
 
     fn scan_and_redact(&self, envelope: &Value, rule_name: Option<&str>) -> Decision {
         let mut modified = envelope.clone();
         let mut changed = false;
-        if let Some(payload) = modified.get_mut("payload_json").and_then(|v| v.as_str()).map(|s| s.to_string()) {
+        if let Some(payload) =
+            modified.get_mut("payload_json").and_then(|v| v.as_str()).map(|s| s.to_string())
+        {
             let redacted = self.pii.replace_all(&payload, "[REDACTED]").into_owned();
             if redacted != payload {
                 changed = true;
-                if let Some(v) = modified.get_mut("payload_json") { *v = json!(redacted); }
+                if let Some(v) = modified.get_mut("payload_json") {
+                    *v = json!(redacted);
+                }
             }
         }
         if changed {
@@ -208,7 +268,13 @@ impl Engine {
                 action: Some("modify".into()),
             }
         } else {
-            Decision { kind: DecisionKind::Allow, payload: None, reason: None, rule_name: None, action: None }
+            Decision {
+                kind: DecisionKind::Allow,
+                payload: None,
+                reason: None,
+                rule_name: None,
+                action: None,
+            }
         }
     }
 
@@ -233,7 +299,11 @@ impl Engine {
                 }
             } else {
                 // No explicit allowlist: if a rule exists to deny ToolInvocation, deny on any tool presence
-                if self.rules.iter().any(|r| r.action == "deny" && r.when.contains("ToolInvocation")) {
+                if self
+                    .rules
+                    .iter()
+                    .any(|r| r.action == "deny" && r.when.contains("ToolInvocation"))
+                {
                     return Some(Decision {
                         kind: DecisionKind::Deny,
                         payload: None,

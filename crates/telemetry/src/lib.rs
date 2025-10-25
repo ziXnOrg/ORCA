@@ -25,9 +25,9 @@ pub fn init_json_logging() {
 /// Initialize OpenTelemetry tracer (optional; behind `otel` feature). No tracing subscriber hookup.
 #[cfg(feature = "otel")]
 pub fn init_otel(service_name: &str) -> Result<(), TelemetryError> {
+    use opentelemetry::KeyValue;
     use opentelemetry_sdk::trace as sdktrace;
     use opentelemetry_sdk::{runtime, Resource};
-    use opentelemetry::KeyValue;
 
     let resource = Resource::new(vec![KeyValue::new("service.name", service_name.to_owned())]);
     let _tracer_provider = opentelemetry_otlp::new_pipeline()
@@ -98,8 +98,12 @@ pub mod metrics {
     }
 
     impl BudgetInstruments {
-        pub fn tokens(&self) -> CounterWrap { self.tokens.clone() }
-        pub fn cost_micros(&self) -> CounterWrap { self.cost_micros.clone() }
+        pub fn tokens(&self) -> CounterWrap {
+            self.tokens.clone()
+        }
+        pub fn cost_micros(&self) -> CounterWrap {
+            self.cost_micros.clone()
+        }
     }
 
     pub fn init_budget_instruments() -> BudgetInstruments {

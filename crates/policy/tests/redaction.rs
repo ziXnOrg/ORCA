@@ -26,5 +26,8 @@ fn load_yaml_rules() {
     eng.load_from_yaml_path(path).unwrap();
     // Not asserting specifics beyond successful load; future: check deny tool rule present
     let d = eng.pre_submit_task(&json!({"payload_json":"ok"}));
-    assert!(matches!(d.kind, policy::DecisionKind::Allow | policy::DecisionKind::Modify | policy::DecisionKind::Deny));
+    assert!(matches!(
+        d.kind,
+        policy::DecisionKind::Allow | policy::DecisionKind::Modify | policy::DecisionKind::Deny
+    ));
 }

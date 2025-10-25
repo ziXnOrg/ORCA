@@ -22,7 +22,6 @@ pub mod orca_v1 {
 
 pub mod clock;
 
-
 use orca_v1::{
     orchestrator_server::{Orchestrator, OrchestratorServer},
     *,
@@ -179,12 +178,10 @@ impl OrchestratorService {
     }
 }
 
-
 impl OrchestratorService {
     #[allow(clippy::result_large_err)] // narrow allow: tonic::Status is large; API is stable and used by gRPC service
     pub fn load_policy_from_path<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), Status> {
-        self
-            .policy
+        self.policy
             .write()
             .unwrap()
             .load_from_yaml_path(path)
@@ -214,7 +211,9 @@ impl OrchestratorService {
         // Only emit for deny/modify/allow_but_flag
         let should_emit = matches!(d.kind, DK::Deny | DK::Modify)
             || matches!(d.action.as_deref(), Some("allow_but_flag"));
-        if !should_emit { return; }
+        if !should_emit {
+            return;
+        }
 
         let envelope_id = env.get("id").and_then(|v| v.as_str());
         let agent = env.get("agent").and_then(|v| v.as_str());
@@ -261,11 +260,19 @@ impl Orchestrator for OrchestratorService {
             let _span = info_span!("agent.policy.check", run=%r.workflow_id, phase="pre_start_run", agent=%env.agent).entered();
             let mut env_json = serde_json::to_value(env).map_err(internal_serde)?;
             let decision = self.policy.read().unwrap().pre_start_run(&env_json);
-            self.append_policy_audit("pre_start_run", None, Some(&r.workflow_id), &env_json, &decision);
+            self.append_policy_audit(
+                "pre_start_run",
+                None,
+                Some(&r.workflow_id),
+                &env_json,
+                &decision,
+            );
             match decision.kind {
                 DecisionKind::Deny => return Err(Status::permission_denied("policy deny")),
                 DecisionKind::Modify => {
-                    if let Some(p) = decision.payload { env_json = p; }
+                    if let Some(p) = decision.payload {
+                        env_json = p;
+                    }
                     // replace initial_task with redacted json->proto
                     r.initial_task =
                         Some(serde_json::from_value(env_json).map_err(internal_serde)?);
@@ -307,11 +314,7 @@ impl Orchestrator for OrchestratorService {
                 });
                 let evt = self.redact_event_payload(evt);
                 self.log
-                    .append(
-                        orca_core::ids::next_monotonic_id(),
-                        now_ts,
-                        &evt,
-                    )
+                    .append(orca_core::ids::next_monotonic_id(), now_ts, &evt)
                     .map_err(internal_io)
             },
             3,
@@ -350,7 +353,9 @@ impl Orchestrator for OrchestratorService {
         match decision.kind {
             DecisionKind::Deny => return Err(Status::permission_denied("policy deny")),
             DecisionKind::Modify => {
-                if let Some(p) = decision.payload { env_json = p; }
+                if let Some(p) = decision.payload {
+                    env_json = p;
+                }
                 r.task = Some(serde_json::from_value(env_json).map_err(internal_serde)?);
             }
             DecisionKind::Allow => {}
@@ -814,5 +819,4 @@ mod tests {
         assert_eq!(p.get("outcome").and_then(|v| v.as_str()), Some("modified"));
         assert_eq!(p.get("rule_name").is_some(), true);
     }
-
 }

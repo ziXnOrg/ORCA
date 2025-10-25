@@ -1,9 +1,18 @@
-//! Virtual Time service: deterministic Clock trait + implementations (RED phase stubs)
+//! Virtual Time service: deterministic Clock trait with SystemClock and VirtualClock.
+//! All orchestrator control-path time reads go through this module for replay determinism.
 
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 /// Clock abstraction for deterministic time in orchestrator control paths.
 /// Returns milliseconds since UNIX epoch.
+///
+/// Example (virtual clock):
+///
+/// ```rust
+/// use orchestrator::clock::{Clock, VirtualClock};
+/// let clk = VirtualClock::new(1_000);
+/// assert_eq!(clk.now_ms(), 1_000);
+/// ```
 pub trait Clock: Send + Sync {
     fn now_ms(&self) -> u64;
 }
@@ -98,4 +107,3 @@ mod tests {
         set_process_clock(original);
     }
 }
-

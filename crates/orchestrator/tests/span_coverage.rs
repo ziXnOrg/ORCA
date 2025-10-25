@@ -1,6 +1,8 @@
 use std::sync::{Arc, Mutex};
 
-use orchestrator::orca_v1::{orchestrator_server::Orchestrator, StartRunRequest, SubmitTaskRequest};
+use orchestrator::orca_v1::{
+    orchestrator_server::Orchestrator, StartRunRequest, SubmitTaskRequest,
+};
 use orchestrator::{orca_v1, OrchestratorService};
 use tracing_subscriber::{layer::Context, prelude::*, registry::LookupSpan, Layer, Registry};
 
@@ -11,7 +13,12 @@ impl<S> Layer<S> for RecordingLayer
 where
     S: tracing::Subscriber + for<'span> LookupSpan<'span>,
 {
-    fn on_new_span(&self, attrs: &tracing::span::Attributes<'_>, id: &tracing::span::Id, ctx: Context<'_, S>) {
+    fn on_new_span(
+        &self,
+        attrs: &tracing::span::Attributes<'_>,
+        id: &tracing::span::Id,
+        ctx: Context<'_, S>,
+    ) {
         let meta = ctx.metadata(id).unwrap_or_else(|| attrs.metadata());
         let name = meta.name().to_string();
         self.spans.lock().unwrap().push(name);
@@ -45,7 +52,11 @@ async fn spans_present_for_key_paths() {
         usage: None,
     };
     let _ = svc
-        .start_run(tonic::Request::new(StartRunRequest { workflow_id: "wf".into(), initial_task: Some(env), budget: None }))
+        .start_run(tonic::Request::new(StartRunRequest {
+            workflow_id: "wf".into(),
+            initial_task: Some(env),
+            budget: None,
+        }))
         .await
         .unwrap();
 
@@ -63,7 +74,10 @@ async fn spans_present_for_key_paths() {
         usage: None,
     };
     let _ = svc
-        .submit_task(tonic::Request::new(SubmitTaskRequest { run_id: "wf".into(), task: Some(env2) }))
+        .submit_task(tonic::Request::new(SubmitTaskRequest {
+            run_id: "wf".into(),
+            task: Some(env2),
+        }))
         .await
         .unwrap();
 
