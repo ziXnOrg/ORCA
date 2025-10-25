@@ -32,6 +32,7 @@ otel = ["telemetry/otel"]
 [build-dependencies]
 tonic-build = "0.11"
 prost-build = "0.12"
+protoc-bin-vendored = "3"
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false }

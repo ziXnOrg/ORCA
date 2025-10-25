@@ -1,4 +1,90 @@
 # Development Log
+- Date (UTC): 2025-10-25 08:05
+- Area: Build|CI|Orchestrator
+- Context/Goal: Unblock PR #62 (T-6a-E3-PH-03) by fixing CI failures on macOS+Linux where `protoc` is not preinstalled.
+- Actions:
+  - Added build-dependency `protoc-bin-vendored = "3"` to `crates/orchestrator/Cargo.toml`
+  - Updated `crates/orchestrator/build.rs` to set `PROTOC` to the vendored binary when not provided by env
+  - Ran local validations (fmt/clippy/tests) and pushed fix to `feat/wasmtime-runner-hostcalls`
+- Results:
+  - Local: cargo fmt/check PASS; cargo clippy --workspace -D warnings PASS; cargo test --workspace PASS
+  - CI: new workflow run started for commit 91e9f08; monitoring until green, then proceed to squash-merge
+- Diagnostics:
+  - GitHub Actions runners lacked `protoc`; `prost-build` panicked in build.rs; vendoring ensures reproducible builds across OS matrix
+- Decision(s): Use vendored `protoc` to avoid OS package installs in CI; keep proto schema unchanged
+- Follow-ups:
+  1) Merge PR #62 on green; record merge SHA
+  2) Close Issue #3 with completion comment and validation evidence
+  3) Branch cleanup, sync main, mark TODO complete, append final merge dev-log entry
+  4) Kick off T-6a-E3-SEC-04 on a new branch with TDD
+
+
+- Date (UTC): 2025-10-25 06:57
+- Area: Runtime (plugin_host)
+- Context/Goal: REFACTOR phase (Part 2) for T-6a-E3-PH-03 — enforce CPU/time budgets (fuel + epoch timeout) and add minimal hostcall registry behind a feature flag; keep tests/clippy/fmt green.
+- Actions:
+  - Enabled fuel and epoch interruption on Engine; set per-invoke fuel via Store::set_fuel and timeout via epoch deadline + background increment
+  - Added PluginRunner fields: fuel_budget (default 1_000_000) and timeout_ms (default 500ms); new with_limits_and_budgets(...)
+  - Enriched invoke errors with suffix: "(fuel exhausted)" vs "(timeout/epoch interruption)" based on Store::get_fuel() after failure
+  - Wired WASI (preview1) with deny-by-default posture; kept optional hostcalls behind `hostcalls` feature; implemented `env::host_log(ptr,len) -> i32`
+  - Tests: added fuel_exhaustion_returns_error, timeout_exceeded_returns_error, hostcall_invalid_bounds_returns_error; integration test hostcall_log_integration (feature-gated)
+  - Fixed string literal quoting in WAT fixtures; moved misplaced tests into #[cfg(test)] module
+- Results:
+  - cargo test -p plugin_host: PASS (default and with --features hostcalls)
+  - cargo clippy -p plugin_host -D warnings: PASS
+  - cargo fmt --all -- --check: PASS
+  - cargo test --workspace -- --nocapture: PASS
+- Diagnostics:
+  - Wasmtime v24 API uses Store::{set_fuel,get_fuel} (not add_fuel)
+  - Timeout via epoch requires set_epoch_deadline + Engine::increment_epoch(); message is generic, so we annotate reason based on remaining fuel
+  - Memory cap unit test returns -1 on memory.grow as expected under StoreLimits
+- Decision(s):
+  - Keep hostcalls behind `hostcalls` feature and minimal (single host_log) to limit surface area; no ambient authority
+  - Defaults are fail-closed and bounded: 128 MiB, 1M fuel, 500 ms timeout
+  - Observability (metrics/traces) and richer hostcall registry deferred to next polish
+- Follow-ups:
+  1) Open PR: refactor(plugin-host): fuel/timeout budgets + feature-gated hostcalls (T-6a-E3-PH-03)
+  2) Update Issue #3 with REFACTOR Part 2 completion (summary + validation logs)
+  3) If approved, squash-merge and proceed to observability polish in a follow-up
+
+
+- Date (UTC): 2025-10-25 06:45
+- Area: Runtime (plugin_host)
+- Context/Goal: REFACTOR phase for T-6a-E3-PH-03 — wire WASI sandbox with deny-by-default posture, enforce resource limits, keep tests/clippy/fmt green, and document.
+- Actions:
+  - Aligned deps to wasmtime/wasmtime-wasi v24.0.4; added pollster for blocking async paths
+  - Switched Store state to preview1 WasiP1Ctx; added WASI via preview1::wasi_snapshot_preview1::add_to_linker
+  - Enabled async support on Engine; used instantiate_async and call_async with pollster::block_on
+  - Added StoreLimits memory cap (default 128 MiB) and unit test asserting memory.grow denial (-1)
+  - Updated rustdoc with security posture and limits; kept observability as TODOs
+- Results:
+  - cargo test --workspace: PASS (all)
+  - cargo clippy -p plugin_host -D warnings: PASS
+  - cargo fmt --all -- --check: PASS
+- Diagnostics:
+  - Wasmtime v24 uses async WASI shims; requires Engine Config async_support(true) and async instantiate/call
+  - Type for preview1 add_to_linker expects WasiP1Ctx; use WasiCtxBuilder::build_p1()
+  - StoreLimits caps effective for memory.grow returning -1 (no trap)
+- Decision(s):
+  - Defer hostcall registry (host_log) to follow-up to keep scope <50 LoC; document as TODO in Issue #3
+  - Fuel/timeouts will be implemented in next polish pass (configurable limits, fail-closed)
+- Follow-ups:
+  1) Add fuel budget + timeout (epoch/fuel) with tests
+  2) Minimal hostcall registry (host_log) behind feature flag
+  3) Observability (metrics/traces) for invoke + limits; docs for plugin authoring
+
+- Date (UTC): 2025-10-25 05:58
+- Area: Runtime (plugin_host)
+- Context/Goal: GREEN phase for T-6a-E3-PH-03 — implement minimal Wasmtime-backed runner to load a module and invoke an exported function.
+- Actions:
+  - Replaced stubs with Engine/Module/Store/Linker implementation
+  - Added unit test for missing export error path; kept integration test invoking add(2,3)
+- Results: Validations PASS — cargo test -p plugin_host, cargo clippy -p plugin_host -D warnings, cargo fmt -- --check, cargo test --workspace
+- Diagnostics: Kept GREEN minimal; WASI wiring deferred to REFACTOR to preserve scope and deny-by-default posture
+- Decision(s): Proceed to REFACTOR to add WASI sandbox and resource limits while maintaining security baseline
+- Follow-ups: REFACTOR — WASI ctx + add_to_linker, per-invoke fuel, memory cap placeholder, observability TODOs
+
+
 - Date (UTC): 2025-10-25 04:58
 - Area: Orchestrator|Performance|Docs|CI|Git
 - Context/Goal: Add targeted micro-benchmark for VirtualClock::now_ms() to verify ≤200 ns p95 budget (T-6a-E1-ORCH-02), then execute standard end-of-task workflow (merge PR #61, close Issue #2, branch cleanup, sync main).
