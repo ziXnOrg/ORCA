@@ -4,6 +4,8 @@
 
 use plugin_host::{ManifestVerifier, PluginManifest, VerificationError};
 
+use sha2::{Digest, Sha256};
+
 fn wasm_minimal() -> Vec<u8> {
     let wat = "(module)";
     wat::parse_str(wat).expect("WAT -> WASM should succeed")
@@ -21,7 +23,10 @@ fn unsigned_manifest_fails_verification() {
     };
     let v = ManifestVerifier::new();
     let res = v.verify(&manifest, &wasm);
-    assert!(matches!(res, Err(VerificationError::MissingSignature)), "expected MissingSignature, got: {:?}", res);
+    assert!(
+        matches!(res, Err(VerificationError::MissingSignature)),
+        "expected MissingSignature, got: {res:?}"
+    );
 }
 
 #[test]
@@ -36,22 +41,30 @@ fn tampered_manifest_fails_verification() {
     };
     let v = ManifestVerifier::new();
     let res = v.verify(&manifest, &wasm);
-    assert!(matches!(res, Err(VerificationError::DigestMismatch)), "expected DigestMismatch, got: {:?}", res);
+    assert!(
+        matches!(res, Err(VerificationError::DigestMismatch)),
+        "expected DigestMismatch, got: {res:?}"
+    );
 }
 
 #[test]
 fn invalid_signature_fails_verification() {
     let wasm = wasm_minimal();
+    // Compute correct digest to isolate signature failure path.
+    let digest_hex = hex::encode(Sha256::digest(&wasm));
     let manifest = PluginManifest {
         name: "demo".into(),
         version: "1.0.0".into(),
-        wasm_digest: "deadbeef".into(),
+        wasm_digest: digest_hex,
         signature: Some("not-a-valid-signature".into()),
         sbom_ref: Some("sbom.json".into()),
     };
     let v = ManifestVerifier::new();
     let res = v.verify(&manifest, &wasm);
-    assert!(matches!(res, Err(VerificationError::InvalidSignature)), "expected InvalidSignature, got: {:?}", res);
+    assert!(
+        matches!(res, Err(VerificationError::InvalidSignature)),
+        "expected InvalidSignature, got: {res:?}"
+    );
 }
 
 #[test]
@@ -66,6 +79,8 @@ fn missing_sbom_fails_policy_check() {
     };
     let v = ManifestVerifier::new();
     let res = v.verify(&manifest, &wasm);
-    assert!(matches!(res, Err(VerificationError::MissingSbom)), "expected MissingSbom, got: {:?}", res);
+    assert!(
+        matches!(res, Err(VerificationError::MissingSbom)),
+        "expected MissingSbom, got: {res:?}"
+    );
 }
-

@@ -210,15 +210,16 @@ impl PluginRunner {
     }
 }
 
-
 /// Plugin manifest describing the WASM module and supply-chain metadata.
 #[derive(Debug, Clone)]
 pub struct PluginManifest {
+    /// Human-readable plugin name (informational only).
     pub name: String,
+    /// Semantic version of the plugin (informational only).
     pub version: String,
-    /// Hex-encoded SHA-256 of the WASM bytes (digest pinning).
+    /// Hex-encoded SHA-256 of the WASM bytes (digest pinning, lowercase preferred).
     pub wasm_digest: String,
-    /// Base64-encoded signature or Sigstore bundle reference. None => unsigned.
+    /// Base64-encoded signature or Sigstore bundle material. None => unsigned.
     pub signature: Option<String>,
     /// Reference to SBOM (e.g., filename or digest). None => missing per policy.
     pub sbom_ref: Option<String>,
@@ -227,36 +228,91 @@ pub struct PluginManifest {
 /// Verification errors for plugin manifests (fail-closed by default).
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum VerificationError {
+    /// Signature is required but missing (`require_signed_plugins=true`).
     #[error("manifest missing signature")]
     MissingSignature,
+    /// SBOM reference is required but missing (`require_signed_plugins=true`).
     #[error("manifest missing SBOM reference")]
     MissingSbom,
+    /// WASM digest did not match `manifest.wasm_digest`.
     #[error("digest mismatch")]
     DigestMismatch,
+    /// Signature present but failed offline verification/decoding.
     #[error("invalid signature")]
     InvalidSignature,
+    /// Other error category.
     #[error("{0}")]
     Other(String),
 }
 
-/// Offline verifier (no network). Policy: require_signed_plugins=true by default.
+/// Offline verifier (no network). Policy: `require_signed_plugins=true` by default.
 #[derive(Debug, Clone)]
 pub struct ManifestVerifier {
+    /// When true, signatures and SBOM references are required; deny on any error.
     pub require_signed_plugins: bool,
 }
 
 impl Default for ManifestVerifier {
-    fn default() -> Self { Self { require_signed_plugins: true } }
+    fn default() -> Self {
+        Self { require_signed_plugins: true }
+    }
 }
 
 impl ManifestVerifier {
+    /// Construct a verifier with default fail-closed policy (require signatures).
     #[must_use]
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// Verify manifest against provided WASM bytes.
     ///
-    /// RED-phase stub: always returns Ok(()) to force tests to fail until GREEN.
-    pub fn verify(&self, _manifest: &PluginManifest, _wasm: &[u8]) -> Result<(), VerificationError> {
+    /// Deterministic, offline-only; no network I/O or wall-clock dependencies.
+    ///
+    /// # Errors
+    /// Returns:
+    /// - `VerificationError::MissingSignature` when a signature is required but not present.
+    /// - `VerificationError::MissingSbom` when SBOM reference is required but missing.
+    /// - `VerificationError::DigestMismatch` when the WASM digest does not match the manifest.
+    /// - `VerificationError::InvalidSignature` when signature decoding/verification fails.
+    pub fn verify(&self, manifest: &PluginManifest, wasm: &[u8]) -> Result<(), VerificationError> {
+        // Bring hashing trait methods into scope.
+        use sha2::Digest as _;
+        // Policy gates first: require signature and SBOM if configured.
+        if self.require_signed_plugins {
+            if manifest.signature.is_none() {
+                return Err(VerificationError::MissingSignature);
+            }
+            if manifest.sbom_ref.is_none() {
+                return Err(VerificationError::MissingSbom);
+            }
+        }
+
+        // Digest pinning: sha256(WASM) must equal manifest.wasm_digest (hex, case-insensitive).
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(wasm);
+        let digest_hex = hex::encode(hasher.finalize());
+        let expected = manifest.wasm_digest.trim().to_ascii_lowercase();
+        if digest_hex != expected {
+            return Err(VerificationError::DigestMismatch);
+        }
+
+        // Offline signature verification: for now, require base64-encoded material and
+        // return InvalidSignature if decoding or offline verification fails. This remains
+        // offline and deterministic; network is not used.
+        if let Some(sig) = &manifest.signature {
+            // Base64 sanity check (common for cosign bundle blobs), fail if invalid.
+            use base64::engine::general_purpose::STANDARD;
+            use base64::Engine as _;
+            if STANDARD.decode(sig).is_err() {
+                return Err(VerificationError::InvalidSignature);
+            }
+            // TODO(SEC-04 GREEN+): integrate sigstore offline verification against
+            // a pinned trust root/bundle. Until valid fixtures are added, conservatively
+            // fail to avoid accepting unverified signatures.
+            return Err(VerificationError::InvalidSignature);
+        }
+
         Ok(())
     }
 }
