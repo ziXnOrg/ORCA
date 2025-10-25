@@ -1,4 +1,31 @@
 # Development Log
+- Date (UTC): 2025-10-25 04:58
+- Area: Orchestrator|Performance|Docs|CI|Git
+- Context/Goal: Add targeted micro-benchmark for VirtualClock::now_ms() to verify ≤200 ns p95 budget (T-6a-E1-ORCH-02), then execute standard end-of-task workflow (merge PR #61, close Issue #2, branch cleanup, sync main).
+- Actions:
+  - Created `crates/orchestrator/benches/clock.rs` (Criterion) and added `[[bench]] name = "clock", harness = false` to orchestrator Cargo.toml
+  - Ran `cargo bench --bench clock` and captured results; updated PR #61 body and Issue #2 with summary
+  - Squash-merged PR #61 into main (merge commit: 520f63b); closed Issue #2; deleted branch `feat/virtual-time-clock`
+  - Synced main locally; ran validations and formatted benches per rustfmt (commit: 43ca241)
+  - Validations: `cargo bench --bench clock` (PASS); `cargo test --workspace -- --nocapture` (PASS); `cargo clippy --workspace -- -D warnings` (PASS); `cargo fmt -- --check` (PASS)
+- Results:
+  - Benchmark (group: clock_now_ms):
+    - virtual_clock_now_ms: median ~4.24 ns; p95 ≪ 200 ns
+    - system_clock_now_ms: median ~19.53 ns
+    - direct_systemtime_now: median ~19.53 ns
+  - Baseline artifacts written under `target/criterion/` for future perf regression checks
+  - All AC for ORCH-02 satisfied; main is green post-merge
+- Diagnostics:
+  - Criterion sample_size set to 1000 for better resolution on sub-20ns paths
+  - Process-wide registry read path shows negligible overhead; VirtualClock has no syscalls/allocations
+- Decision(s):
+  - Accept VirtualClock performance; record baseline and proceed
+  - Plan follow-up lint to deny direct SystemTime/Instant in orchestrator
+- Follow-ups:
+  - Consider explicit `with_clock(...)` constructor for orchestrator in integration tests
+  - Add CI perf guard using Criterion baselines when noise thresholds are established
+
+
 - Date (UTC): 2025-10-25 03:49
 - Area: Orchestrator|Determinism|Docs|CI
 - Context/Goal: Implement T-6a-E1-ORCH-02 Virtual Time service (Clock trait + Virtual/System clocks) with injection into orchestrator; validate workspace and open PR.
