@@ -1,4 +1,19 @@
 # Development Log
+- Date (UTC): 2025-10-25 03:49
+- Area: Orchestrator|Determinism|Docs|CI
+- Context/Goal: Implement T-6a-E1-ORCH-02 Virtual Time service (Clock trait + Virtual/System clocks) with injection into orchestrator; validate workspace and open PR.
+- Actions:
+  - Added crates/orchestrator/src/clock.rs with Clock trait, SystemClock, VirtualClock, process_clock()/set_process_clock(), unit tests, and doctest
+  - Replaced all orchestrator control-path `now_ms()` uses with `clock::process_clock().now_ms()`; added rustdoc and examples
+  - Ran formatting and lints across workspace; fixed replay-cli clippy warnings (option-as-ref-deref, too_many_arguments)
+  - Validation: cargo fmt -- --check (PASS); cargo clippy --workspace -- -D warnings (PASS); cargo test --workspace (PASS); cargo test -p orchestrator --doc (PASS)
+  - Opened PR #61 to main with AC mapping and validation results; updated Issue #2
+- Results: Deterministic time abstraction in place; all workspace checks green; PR #61 open
+- Diagnostics: Doctest import path needed external crate form (`orchestrator::clock::...`)
+- Decision(s): Proceed with review; maintain process-wide registry for simplicity; consider explicit DI helper as follow-up
+- Follow-ups: On approval, squash-merge PR #61, close Issue #2, delete branch, sync main, append final dev log entry
+
+
 - Date (UTC): 2025-10-24 21:49
 - Area: Workflow|Git|Docs
 - Context/Goal: Complete merge workflow for T-6a-E1-EL-01 and establish standard end-of-task process for ORCA.
