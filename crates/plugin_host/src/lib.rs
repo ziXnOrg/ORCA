@@ -1,10 +1,20 @@
-//! Wasmtime runner skeleton + hostcalls (GREEN): minimal Wasmtime-backed runner for T-6a-E3-PH-03.
-//! Uses `wasmtime::{Engine, Module, Store, Linker}` to load and invoke exported functions.
-//! Security posture: no ambient authority by default; WASI not linked yet (no imports required).
+//! Wasmtime runner + WASI sandbox (REFACTOR): minimal runner with deny-by-default posture.
+//! - Engine with fuel enabled; per-invoke fuel budget to bound CPU (default: 1M units).
+//! - Epoch-based timeout to bound wall time (default: 500 ms per invoke).
+//! - WASI wired with no preopens/network (no ambient authority).
+//! - Memory capped via Store limits (fail-closed defaults; default: 128 MiB).
+//!
+//! TODO(observability): add metrics/traces (plugin.invoke.ms, plugin.fuel.consumed, plugin.mem.bytes).
 
 use std::sync::Arc;
+use std::time::Duration;
 use thiserror::Error;
-use wasmtime::{Engine, Instance, Linker, Module, Store};
+use wasmtime::{Config, Engine, Instance, Linker, Module, Store};
+use wasmtime::{StoreLimits, StoreLimitsBuilder};
+use wasmtime_wasi::preview1::wasi_snapshot_preview1::add_to_linker as add_wasi_to_linker;
+
+use wasmtime_wasi::preview1::WasiP1Ctx;
+use wasmtime_wasi::WasiCtxBuilder;
 
 /// Errors from the plugin runner.
 #[derive(Debug, Error)]
@@ -30,25 +40,73 @@ impl ModuleHandle {
     }
 }
 
-/// Minimal Wasmtime-backed plugin runner holding a shared `Engine`.
+/// Minimal Wasmtime-backed plugin runner holding a shared `Engine` and default limits.
 #[derive(Clone)]
 pub struct PluginRunner {
     engine: Arc<Engine>,
+    memory_limit_bytes: usize,
+    fuel_budget: u64,
+    timeout_ms: u64,
 }
 
 impl Default for PluginRunner {
     fn default() -> Self {
-        // Default Engine config: no special features; safe baseline.
-        let engine = Engine::default();
-        Self { engine: Arc::new(engine) }
+        let mut cfg = Config::new();
+        cfg.async_support(true);
+        cfg.consume_fuel(true);
+        cfg.epoch_interruption(true);
+        let engine = Engine::new(&cfg).expect("engine config should be valid");
+        Self {
+            engine: Arc::new(engine),
+            memory_limit_bytes: 128 * 1024 * 1024,
+            fuel_budget: 1_000_000,
+            timeout_ms: 500,
+        }
     }
 }
 
 impl PluginRunner {
-    /// Create a new runner instance.
+    /// Create a new runner instance with default limits.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create a runner with explicit limits (primarily for tests).
+    ///
+    /// # Panics
+    /// Panics if the Wasmtime engine configuration is invalid.
+    #[must_use]
+    pub fn with_limits(memory_limit_bytes: usize) -> Self {
+        let mut cfg = Config::new();
+        cfg.async_support(true);
+        cfg.consume_fuel(true);
+        cfg.epoch_interruption(true);
+        let engine = Engine::new(&cfg).expect("engine config should be valid");
+        Self {
+            engine: Arc::new(engine),
+            memory_limit_bytes,
+            fuel_budget: 1_000_000,
+            timeout_ms: 500,
+        }
+    }
+
+    /// Create a runner with explicit memory/fuel/timeout budgets (primarily for tests).
+    ///
+    /// # Panics
+    /// Panics if the Wasmtime engine configuration is invalid.
+    #[must_use]
+    pub fn with_limits_and_budgets(
+        memory_limit_bytes: usize,
+        fuel_budget: u64,
+        timeout_ms: u64,
+    ) -> Self {
+        let mut cfg = Config::new();
+        cfg.async_support(true);
+        cfg.consume_fuel(true);
+        cfg.epoch_interruption(true);
+        let engine = Engine::new(&cfg).expect("engine config should be valid");
+        Self { engine: Arc::new(engine), memory_limit_bytes, fuel_budget, timeout_ms }
     }
 
     /// Compile WASM bytes into a `Module` and return a handle.
@@ -64,7 +122,8 @@ impl PluginRunner {
     /// Instantiate the module and invoke a typed export: (i32, i32) -> i32.
     ///
     /// # Errors
-    /// Returns [`RunnerError::InvokeFailed`] when instantiation, lookup, or call fails.
+    /// Returns [`RunnerError::InvokeFailed`] when instantiation, lookup, or call fails,
+    /// including resource budget violations (fuel exhaustion or timeout via epoch interruption).
     pub fn invoke_i32_2(
         &self,
         module: &ModuleHandle,
@@ -72,20 +131,86 @@ impl PluginRunner {
         a: i32,
         b: i32,
     ) -> Result<i32, RunnerError> {
-        // No WASI/hostcalls are required for the test module (no imports),
-        // so we use an empty `Store` data and a fresh `Linker`.
-        let mut store: Store<()> = Store::new(&self.engine, ());
-        let linker: Linker<()> = Linker::new(&self.engine);
+        // Store state carries WASI context and resource limits; limiter returns a mutable
+        // reference to the limits enabling Wasmtime to enforce them.
+        struct StoreState {
+            wasi: WasiP1Ctx,
+            limits: StoreLimits,
+        }
 
-        let instance: Instance = linker
-            .instantiate(&mut store, &module.module)
+        let wasi = WasiCtxBuilder::new().build_p1();
+        let limits = StoreLimitsBuilder::new().memory_size(self.memory_limit_bytes).build();
+        let mut store: Store<StoreState> = Store::new(&self.engine, StoreState { wasi, limits });
+        // Attach the limiter; Wasmtime will consult this to enforce memory/table/instance caps.
+        store.limiter(|s| &mut s.limits);
+        // Add fuel budget (CPU bound) and set epoch deadline for timeouts.
+        store.set_fuel(self.fuel_budget).map_err(|e| RunnerError::InvokeFailed(e.to_string()))?;
+        store.set_epoch_deadline(1);
+        let engine_for_timeout = self.engine.clone();
+        let timeout_ms = self.timeout_ms;
+        let _timeout_thr = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(timeout_ms));
+            engine_for_timeout.increment_epoch();
+        });
+
+        let mut linker: Linker<StoreState> = Linker::new(&self.engine);
+        add_wasi_to_linker(&mut linker, |s: &mut StoreState| &mut s.wasi)
             .map_err(|e| RunnerError::InvokeFailed(e.to_string()))?;
+        #[cfg(feature = "hostcalls")]
+        {
+            use std::str;
+            linker
+                .func_wrap(
+                    "env",
+                    "host_log",
+                    |mut caller: wasmtime::Caller<'_, StoreState>, ptr: i32, len: i32| -> i32 {
+                        let mem = match caller.get_export("memory") {
+                            Some(wasmtime::Extern::Memory(m)) => m,
+
+                            _ => return -1,
+                        };
+                        let Ok(ptr) = usize::try_from(ptr) else {
+                            return -1;
+                        };
+                        let Ok(len) = usize::try_from(len) else {
+                            return -1;
+                        };
+                        let data = mem.data(&caller);
+                        let end = ptr.saturating_add(len);
+                        if end > data.len() {
+                            return -1;
+                        }
+                        match str::from_utf8(&data[ptr..end]) {
+                            Ok(s) => {
+                                eprintln!("[plugin] {}", s);
+                                0
+                            }
+                            Err(_) => -1,
+                        }
+                    },
+                )
+                .map_err(|e| RunnerError::InvokeFailed(e.to_string()))?;
+        }
+
+        let instance: Instance =
+            pollster::block_on(linker.instantiate_async(&mut store, &module.module))
+                .map_err(|e| RunnerError::InvokeFailed(e.to_string()))?;
 
         let func_typed = instance
             .get_typed_func::<(i32, i32), i32>(&mut store, func)
             .map_err(|e| RunnerError::InvokeFailed(e.to_string()))?;
 
-        func_typed.call(&mut store, (a, b)).map_err(|e| RunnerError::InvokeFailed(e.to_string()))
+        match pollster::block_on(func_typed.call_async(&mut store, (a, b))) {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                let fuel = store.get_fuel().ok();
+                let suffix = match fuel {
+                    Some(0) => " (fuel exhausted)".to_string(),
+                    _ => " (timeout/epoch interruption)".to_string(),
+                };
+                Err(RunnerError::InvokeFailed(format!("{e}{suffix}")))
+            }
+        }
     }
 }
 
@@ -104,5 +229,89 @@ mod tests {
         let err = runner.invoke_i32_2(&handle, "missing", 1, 2).unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("invoke failed"));
+    }
+
+    #[test]
+    fn memory_limit_exceeded_returns_error() {
+        // Module exports a memory (1 page = 64KiB) and grows it by 1 page on call.
+        let wat = r#"(module
+            (memory (export "mem") 1)
+            (func (export "grow") (param i32 i32) (result i32)
+              local.get 0
+              drop
+              local.get 1
+              drop
+              i32.const 1
+              memory.grow))"#;
+        let wasm = wat::parse_str(wat).expect("WAT -> WASM should succeed");
+        // Set limit to 64KiB; growing by one page should exceed the cap and error.
+        let runner = PluginRunner::with_limits(64 * 1024);
+        let handle = runner.load_module(&wasm).expect("load module");
+        let res =
+            runner.invoke_i32_2(&handle, "grow", 0, 0).expect("call should succeed or return -1");
+        assert_eq!(res, -1, "memory.grow should be denied by limits and return -1");
+    }
+
+    #[test]
+    fn fuel_exhaustion_returns_error() {
+        // Infinite loop to burn fuel; should trap when fuel is exhausted.
+        let wat = r#"(module
+            (func (export "spin") (param i32 i32) (result i32)
+              loop
+                local.get 0
+                drop
+                local.get 1
+                drop
+                br 0
+              end
+              i32.const 0))"#;
+        let wasm = wat::parse_str(wat).expect("WAT -> WASM should succeed");
+        let runner = PluginRunner::with_limits_and_budgets(128 * 1024 * 1024, 1_000, 5_000);
+        let handle = runner.load_module(&wasm).expect("load module");
+        let err = runner.invoke_i32_2(&handle, "spin", 0, 0).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.to_lowercase().contains("fuel") || msg.to_lowercase().contains("exhaust"),
+            "expected fuel exhaustion error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn timeout_exceeded_returns_error() {
+        // Infinite loop; with large fuel but small timeout, should hit epoch interruption.
+        let wat = r#"(module
+            (func (export "spin") (param i32 i32) (result i32)
+              loop
+                br 0
+              end
+              i32.const 0))"#;
+        let wasm = wat::parse_str(wat).expect("WAT -> WASM should succeed");
+        let runner =
+            PluginRunner::with_limits_and_budgets(128 * 1024 * 1024, 1_000_000_000_000, 100);
+        let handle = runner.load_module(&wasm).expect("load module");
+        let err = runner.invoke_i32_2(&handle, "spin", 0, 0).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.to_lowercase().contains("interrupt") || msg.to_lowercase().contains("epoch"),
+            "expected timeout/epoch interruption, got: {msg}"
+        );
+    }
+
+    #[cfg(feature = "hostcalls")]
+    #[test]
+    fn hostcall_invalid_bounds_returns_error() {
+        // Calls host_log with out-of-bounds pointer/len; expect -1 result.
+        let wat = r#"(module
+            (import "env" "host_log" (func $log (param i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (func (export "bad") (param i32 i32) (result i32)
+              i32.const 100000
+              i32.const 10
+              call $log))"#;
+        let wasm = wat::parse_str(wat).expect("WAT -> WASM should succeed");
+        let runner = PluginRunner::new();
+        let handle = runner.load_module(&wasm).expect("load module");
+        let res = runner.invoke_i32_2(&handle, "bad", 0, 0).expect("call should return -1");
+        assert_eq!(res, -1);
     }
 }
