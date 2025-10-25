@@ -138,7 +138,7 @@ impl OrchestratorService {
 
     fn reject_if_expired_or_version(&self, env: &orca_v1::Envelope) -> Result<(), Status> {
         if env.timeout_ms > 0 {
-            let now = orca_core::ids::now_ms();
+            let now = crate::clock::process_clock().now_ms();
             if now.saturating_sub(env.ts_ms) > env.timeout_ms {
                 return Err(Status::deadline_exceeded("ttl expired"));
             }
@@ -181,6 +181,7 @@ impl OrchestratorService {
 
 
 impl OrchestratorService {
+    #[allow(clippy::result_large_err)] // narrow allow: tonic::Status is large; API is stable and used by gRPC service
     pub fn load_policy_from_path<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), Status> {
         self
             .policy
@@ -236,7 +237,7 @@ impl OrchestratorService {
         });
         let _ = self.log.append(
             orca_core::ids::next_monotonic_id(),
-            orca_core::ids::now_ms(),
+            crate::clock::process_clock().now_ms(),
             &evt,
         );
     }
@@ -299,7 +300,7 @@ impl Orchestrator for OrchestratorService {
         self.retry(
             || async {
                 let _span = info_span!("wal.append", event="start_run", workflow=%wf).entered();
-                let now_ts = orca_core::ids::now_ms();
+                let now_ts = crate::clock::process_clock().now_ms();
                 self.index.run_start_ts_by_run.insert(wf.clone(), now_ts);
                 let evt = json!({
                     "event":"start_run", "workflow_id": wf, "envelope": r.initial_task
@@ -384,7 +385,7 @@ impl Orchestrator for OrchestratorService {
                         .log
                         .append(
                             orca_core::ids::next_monotonic_id(),
-                            orca_core::ids::now_ms(),
+                            crate::clock::process_clock().now_ms(),
                             &json!({
                                 "event":"budget_exceeded", "run_id": r.run_id
                             }),
@@ -397,7 +398,7 @@ impl Orchestrator for OrchestratorService {
                         .log
                         .append(
                             orca_core::ids::next_monotonic_id(),
-                            orca_core::ids::now_ms(),
+                            crate::clock::process_clock().now_ms(),
                             &json!({
                                 "event":"budget_warning", "run_id": r.run_id, "level":"90"
                             }),
@@ -410,7 +411,7 @@ impl Orchestrator for OrchestratorService {
                         .log
                         .append(
                             orca_core::ids::next_monotonic_id(),
-                            orca_core::ids::now_ms(),
+                            crate::clock::process_clock().now_ms(),
                             &json!({
                                 "event":"budget_warning", "run_id": r.run_id, "level":"80"
                             }),
@@ -437,7 +438,7 @@ impl Orchestrator for OrchestratorService {
                         .log
                         .append(
                             orca_core::ids::next_monotonic_id(),
-                            orca_core::ids::now_ms(),
+                            crate::clock::process_clock().now_ms(),
                             &json!({
                                 "event":"budget_exceeded", "run_id": r.run_id
                             }),
@@ -450,7 +451,7 @@ impl Orchestrator for OrchestratorService {
                         .log
                         .append(
                             orca_core::ids::next_monotonic_id(),
-                            orca_core::ids::now_ms(),
+                            crate::clock::process_clock().now_ms(),
                             &json!({
                                 "event":"budget_warning", "run_id": r.run_id, "level":"90"
                             }),
@@ -463,7 +464,7 @@ impl Orchestrator for OrchestratorService {
                         .log
                         .append(
                             orca_core::ids::next_monotonic_id(),
-                            orca_core::ids::now_ms(),
+                            crate::clock::process_clock().now_ms(),
                             &json!({
                                 "event":"budget_warning", "run_id": r.run_id, "level":"80"
                             }),
@@ -491,10 +492,10 @@ impl Orchestrator for OrchestratorService {
                 .log
                 .append(
                     orca_core::ids::next_monotonic_id(),
-                    orca_core::ids::now_ms(),
+                    crate::clock::process_clock().now_ms(),
                     &json!({
                         "event":"usage_update", "run_id": r.run_id, "tokens": *t, "cost_micros": *c,
-                        "elapsed_ms": self.index.run_start_ts_by_run.get(&r.run_id).map(|v| orca_core::ids::now_ms().saturating_sub(*v.value())).unwrap_or(0)
+                        "elapsed_ms": self.index.run_start_ts_by_run.get(&r.run_id).map(|v| crate::clock::process_clock().now_ms().saturating_sub(*v.value())).unwrap_or(0)
                     }),
                 )
                 .map_err(internal_io)?;
@@ -514,7 +515,7 @@ impl Orchestrator for OrchestratorService {
                 self.log
                     .append(
                         orca_core::ids::next_monotonic_id(),
-                        orca_core::ids::now_ms(),
+                        crate::clock::process_clock().now_ms(),
                         &evt,
                     )
                     .map_err(internal_io)
@@ -552,9 +553,9 @@ impl Orchestrator for OrchestratorService {
                         breakdown.push(json!({"agent": agent, "tokens": at, "cost_micros": ac }));
                     }
                 }
-                let _ = self.log.append(orca_core::ids::next_monotonic_id(), orca_core::ids::now_ms(), &json!({
+                let _ = self.log.append(orca_core::ids::next_monotonic_id(), crate::clock::process_clock().now_ms(), &json!({
                     "event":"run_summary", "run_id": r.run_id, "tokens": t, "cost_micros": c, "by_agent": breakdown,
-                    "duration_ms": self.index.run_start_ts_by_run.get(&r.run_id).map(|v| orca_core::ids::now_ms().saturating_sub(*v.value())).unwrap_or(0)
+                    "duration_ms": self.index.run_start_ts_by_run.get(&r.run_id).map(|v| crate::clock::process_clock().now_ms().saturating_sub(*v.value())).unwrap_or(0)
                 })).map_err(internal_io)?;
             }
         }
@@ -684,7 +685,7 @@ mod tests {
             payload_json: "{}".into(),
             timeout_ms: 1,
             protocol_version: 1,
-            ts_ms: orca_core::ids::now_ms().saturating_sub(10_000),
+            ts_ms: crate::clock::process_clock().now_ms().saturating_sub(10_000),
             usage: None,
         };
         let req = SubmitTaskRequest { run_id: "r".into(), task: Some(env) };
@@ -706,7 +707,7 @@ mod tests {
             payload_json: "{}".into(),
             timeout_ms: 0,
             protocol_version: 1,
-            ts_ms: orca_core::ids::now_ms(),
+            ts_ms: crate::clock::process_clock().now_ms(),
             usage: None,
         };
         let req1 = SubmitTaskRequest { run_id: "r".into(), task: Some(env.clone()) };
@@ -747,7 +748,7 @@ mod tests {
             payload_json: "{}".into(),
             timeout_ms: 0,
             protocol_version: 1,
-            ts_ms: orca_core::ids::now_ms(),
+            ts_ms: crate::clock::process_clock().now_ms(),
             usage: None,
         };
         let req = SubmitTaskRequest { run_id: "r2".into(), task: Some(env) };
@@ -797,7 +798,7 @@ mod tests {
             payload_json: serde_json::to_string(&payload).unwrap(),
             timeout_ms: 0,
             protocol_version: 1,
-            ts_ms: orca_core::ids::now_ms(),
+            ts_ms: crate::clock::process_clock().now_ms(),
             usage: None,
         };
         let req = SubmitTaskRequest { run_id: "r3".into(), task: Some(env) };
