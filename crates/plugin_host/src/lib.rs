@@ -164,10 +164,8 @@ impl PluginRunner {
                     "env",
                     "host_log",
                     |mut caller: wasmtime::Caller<'_, StoreState>, ptr: i32, len: i32| -> i32 {
-                        let mem = match caller.get_export("memory") {
-                            Some(wasmtime::Extern::Memory(m)) => m,
-
-                            _ => return -1,
+                        let Some(wasmtime::Extern::Memory(mem)) = caller.get_export("memory") else {
+                            return -1;
                         };
                         let Ok(ptr) = usize::try_from(ptr) else {
                             return -1;
@@ -180,13 +178,10 @@ impl PluginRunner {
                         if end > data.len() {
                             return -1;
                         }
-                        match str::from_utf8(&data[ptr..end]) {
-                            Ok(s) => {
-                                eprintln!("[plugin] {}", s);
-                                0
-                            }
-                            Err(_) => -1,
-                        }
+                        str::from_utf8(&data[ptr..end]).map_or(-1, |s| {
+                            eprintln!("[plugin] {s}");
+                            0
+                        })
                     },
                 )
                 .map_err(|e| RunnerError::InvokeFailed(e.to_string()))?;

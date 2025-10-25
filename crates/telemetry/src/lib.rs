@@ -45,9 +45,7 @@ pub mod metrics {
     use super::TelemetryError;
     use once_cell::sync::OnceCell;
     use opentelemetry::metrics::{Counter, Histogram, Meter, Unit};
-    use opentelemetry::{global, KeyValue};
-    use opentelemetry_sdk::metrics::SdkMeterProvider;
-    use opentelemetry_sdk::Resource;
+    use opentelemetry::global;
 
     static METRICS_INIT: OnceCell<()> = OnceCell::new();
 
@@ -73,7 +71,6 @@ pub mod metrics {
     fn ensure_metrics_provider() {
         let _ = METRICS_INIT.get_or_init(|| {
             let _ = init_metrics_from_env();
-            ()
         });
     }
 

@@ -817,6 +817,6 @@ mod tests {
         assert!(!audits.is_empty(), "expected audit event for modify");
         let p = &audits[audits.len() - 1].payload;
         assert_eq!(p.get("outcome").and_then(|v| v.as_str()), Some("modified"));
-        assert_eq!(p.get("rule_name").is_some(), true);
+        assert!(p.get("rule_name").is_some());
     }
 }

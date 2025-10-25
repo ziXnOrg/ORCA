@@ -16,7 +16,7 @@ fn bench_clock_now_ms(c: &mut Criterion) {
     });
 
     // SystemClock (wraps SystemTime)
-    let sclk = orchestrator::clock::SystemClock::default();
+    let sclk = orchestrator::clock::SystemClock;
     group.bench_function("system_clock_now_ms", |b| b.iter(|| black_box(sclk.now_ms())));
 
     // Direct SystemTime for reference
