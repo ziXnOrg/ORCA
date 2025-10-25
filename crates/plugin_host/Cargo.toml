@@ -1,0 +1,17 @@
+[package]
+name = "plugin_host"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror = "2.0.17"
+wasmtime = "21.0.2"
+wasmtime-wasi = "24.0.4"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+wat = "1.207.0"
