@@ -62,7 +62,7 @@ The following tasks are the highest-priority items from Phase 6a. See the Phase 
   - [ ] Artifacts & Repro: schemas/v2.md; tests/golden/*.jsonl; bench notes and seed
   - [ ] Rules referenced: agentic-architecture.md; rust-standards.md; testing-validation.md; performance-optimization.md; observability.md; security-privacy.md
 #### crates/orchestrator
-- [ ] T-6a-E1-ORCH-02 — Virtual Time service + injection — AC: deterministic Clock trait; process-wide default; perf budgets; Deps: T-6a-E1-EL-01; Effort: 2d; Affected: crates/orchestrator; Tests: unit; Docs: dev guide; Risk: Med; Rollback: toggle.
+- [x] T-6a-E1-ORCH-02 — Virtual Time service + injection — AC: deterministic Clock trait; process-wide default; perf budgets; Deps: T-6a-E1-EL-01; Effort: 2d; Affected: crates/orchestrator; Tests: unit; Docs: dev guide; Risk: Med; Rollback: toggle.
   - [ ] Framework: CoT (debugging/logic; invariant-driven)
   - [ ] Context Retrieval
     - [ ] Stratum 1: crates/orchestrator; Quick Start ORCH-02; Unified Roadmap E1
