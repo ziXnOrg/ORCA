@@ -1,4 +1,74 @@
 # Development Log
+- Date (UTC): 2025-10-25 03:49
+- Area: Orchestrator|Determinism|Docs|CI
+- Context/Goal: Implement T-6a-E1-ORCH-02 Virtual Time service (Clock trait + Virtual/System clocks) with injection into orchestrator; validate workspace and open PR.
+- Actions:
+  - Added crates/orchestrator/src/clock.rs with Clock trait, SystemClock, VirtualClock, process_clock()/set_process_clock(), unit tests, and doctest
+  - Replaced all orchestrator control-path `now_ms()` uses with `clock::process_clock().now_ms()`; added rustdoc and examples
+  - Ran formatting and lints across workspace; fixed replay-cli clippy warnings (option-as-ref-deref, too_many_arguments)
+  - Validation: cargo fmt -- --check (PASS); cargo clippy --workspace -- -D warnings (PASS); cargo test --workspace (PASS); cargo test -p orchestrator --doc (PASS)
+  - Opened PR #61 to main with AC mapping and validation results; updated Issue #2
+- Results: Deterministic time abstraction in place; all workspace checks green; PR #61 open
+- Diagnostics: Doctest import path needed external crate form (`orchestrator::clock::...`)
+- Decision(s): Proceed with review; maintain process-wide registry for simplicity; consider explicit DI helper as follow-up
+- Follow-ups: On approval, squash-merge PR #61, close Issue #2, delete branch, sync main, append final dev log entry
+
+
+- Date (UTC): 2025-10-24 21:49
+- Area: Workflow|Git|Docs
+- Context/Goal: Complete merge workflow for T-6a-E1-EL-01 and establish standard end-of-task process for ORCA.
+- Actions:
+  - Updated code comments in event-log v2 module to reflect completion status (deterministic serialization; golden-tested)
+  - Squash-merged PR #60 to main (commit: 1607090de62492abecdb444dfc82f77a481a0a97)
+  - Closed Issue #1 with final summary and commit link
+  - Deleted feature branch feat/wal-v2-schema (remote and local)
+  - Synced local main and validated: cargo test --workspace (PASS)
+  - Created new feature branch feat/virtual-time-clock for T-6a-E1-ORCH-02
+- Results: Clean merge to main; repo and branches tidy; all tests green on main
+- Decision(s): Adopt the following standard end-of-task workflow for all tasks:
+  1) Pre-merge quality check: update stale code comments (RED/skeleton/stub → final)
+  2) Push and PR: comprehensive description referencing issue and AC
+  3) Merge: prefer squash for single-feature branches after validations pass
+  4) Close issue: comment with commit link and verification notes, then close
+  5) Branch cleanup: delete remote+local feature branch
+  6) Sync: pull main locally and re-run validation
+  7) Next branch: create from updated main for the next task
+  8) Document: append dev log entry with timestamps, actions, results, decisions
+- Follow-ups: Apply this workflow consistently for subsequent tasks (next: T-6a-E1-ORCH-02)
+
+
+- Date (UTC): 2025-10-24 21:37
+- Area: WAL|Docs|CI
+- Context/Goal: Push feature branch and open PR for T-6a-E1-EL-01 (WAL v2 schemas + golden tests), update tracking, and prepare next task.
+- Actions:
+  - Pushed branch `feat/wal-v2-schema` to origin
+  - Opened PR #60 to main: feat(event-log): WAL v2 schemas + golden tests (T-6a-E1-EL-01)
+  - Updated Issue #1 with PR link and status (awaiting review)
+  - Ran workspace validation: cargo test --workspace (PASS)
+  - Maintained scope to event-log + Docs; TODO.md marked complete for this task
+- Results: Remote branch created; PR open (https://github.com/ziXnOrg/ORCA/pull/60); tests/clippy pass; fmt note limited to other crates (unchanged here)
+- Diagnostics: None new; formatting diffs in other crates pre-exist and are out-of-scope for this PR
+- Decision(s): Keep Issue #1 open until merge and verification on main
+- Follow-ups:
+  - On approval: merge PR; verify on main; then close Issue #1
+  - Next task candidate per Quick Start: T-6a-E1-ORCH-02 (Virtual Time service)
+
+
+- Date (UTC): 2025-10-24 21:15
+- Area: WAL
+- Context/Goal: Implement T-6a-E1-EL-01 (WAL v2 schemas + golden tests) with deterministic typed serialization and backward-compatibility.
+- Actions:
+  - Added event_log::v2 typed schema (RecordV2<T>, EventTypeV2, StartRunPayload, TaskEnqueuedPayload, UsageUpdatePayload)
+  - Wrote golden fixture and tests: wal_v2_golden.rs (bytes match) and v1_v2_compat.rs (v2 readable via v1 EventRecord<Value>)
+  - Finalized Docs/schemas/v2.md with normative field order and invariants
+  - Ran validations: cargo test -p event-log, cargo clippy -p event-log; noted workspace fmt diffs to be handled separately
+- Results: All event-log tests passing; clippy clean for event-log; golden file stable
+- Diagnostics: Serde maps caused ordering mismatch; fixed via typed structs with struct field order
+- Decision(s): Keep v2 writer separate; rely on v1 EventRecord to read v2 for now; full version-gating/virtual clock later
+- Follow-ups:
+  - Add additional variants (policy_audit, run_summary, budget_*) and property tests
+  - Wire VirtualClock and wal_v2 feature flag in orchestrator (future tasks)
+
 
 *Latest entries at top; use UTC timestamps.*
 ### 2025-10-24 08:39 (UTC)

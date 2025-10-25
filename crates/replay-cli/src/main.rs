@@ -68,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cmd_replay(&wal, run_id.as_deref(), from, to, since_ts_ms, max, dry_run, interactive)?
         }
         Command::ToTrace { wal, run_id, from, to, out } => {
-            cmd_to_trace(&wal, &run_id, from, to, out.as_ref().map(|p| p.as_path()))?
+            cmd_to_trace(&wal, &run_id, from, to, out.as_deref())?
         }
     }
     Ok(())
@@ -112,12 +112,7 @@ fn cmd_inspect(wal: &PathBuf, run_id: Option<&str>) -> Result<(), Box<dyn std::e
     let last_ts = recs.last().map(|r| r.ts_ms).unwrap_or(0);
     let mut by_event = std::collections::BTreeMap::<String, usize>::new();
     for rec in &recs {
-        let kind = rec
-            .payload
-            .get("event")
-            .and_then(|v| v.as_str())
-            .unwrap_or("event")
-            .to_string();
+        let kind = rec.payload.get("event").and_then(|v| v.as_str()).unwrap_or("event").to_string();
         *by_event.entry(kind).or_default() += 1;
     }
     let out = json!({
@@ -132,6 +127,7 @@ fn cmd_inspect(wal: &PathBuf, run_id: Option<&str>) -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_replay(
     wal: &PathBuf,
     run_id: Option<&str>,
@@ -150,13 +146,7 @@ fn cmd_replay(
     println!("=== Replaying WAL: {:?} ===", wal);
     for (idx, rec) in recs.iter().enumerate() {
         let p: &Value = &rec.payload;
-        println!(
-            "[{}] id={} ts={} event={:?}",
-            idx,
-            rec.id,
-            rec.ts_ms,
-            p.get("event")
-        );
+        println!("[{}] id={} ts={} event={:?}", idx, rec.id, rec.ts_ms, p.get("event"));
         if interactive {
             println!("  payload: {}", serde_json::to_string_pretty(p)?);
             println!("Press Enter to continue...");
@@ -207,9 +197,27 @@ mod tests {
         let log = JsonlEventLog::open(&wal).unwrap();
         let ts = orca_core::ids::now_ms();
         let _ = log.append(1, ts, &json!({"event":"start_run","workflow_id":"R1"})).unwrap();
-        let _ = log.append(2, ts + 1, &json!({"event":"task_enqueued","run_id":"R1","envelope":{"id":"e1"}})).unwrap();
-        let _ = log.append(3, ts + 2, &json!({"event":"usage_update","run_id":"R1","tokens":10,"cost_micros":1000})).unwrap();
-        let _ = log.append(4, ts + 3, &json!({"event":"task_enqueued","run_id":"R2","envelope":{"id":"e2"}})).unwrap();
+        let _ = log
+            .append(
+                2,
+                ts + 1,
+                &json!({"event":"task_enqueued","run_id":"R1","envelope":{"id":"e1"}}),
+            )
+            .unwrap();
+        let _ = log
+            .append(
+                3,
+                ts + 2,
+                &json!({"event":"usage_update","run_id":"R1","tokens":10,"cost_micros":1000}),
+            )
+            .unwrap();
+        let _ = log
+            .append(
+                4,
+                ts + 3,
+                &json!({"event":"task_enqueued","run_id":"R2","envelope":{"id":"e2"}}),
+            )
+            .unwrap();
         wal
     }
 

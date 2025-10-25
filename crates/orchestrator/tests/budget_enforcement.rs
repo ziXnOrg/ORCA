@@ -1,6 +1,6 @@
 use event_log::JsonlEventLog;
-use orchestrator::{orca_v1::*, OrchestratorService};
 use orchestrator::orca_v1::orchestrator_server::Orchestrator;
+use orchestrator::{orca_v1::*, OrchestratorService};
 use tonic::Request;
 
 #[tokio::test]

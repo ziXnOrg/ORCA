@@ -84,4 +84,3 @@ rules:
     assert!(matches!(d.kind, policy::DecisionKind::Deny));
     assert_eq!(d.rule_name.as_deref(), Some("Deny First"));
 }
-

@@ -90,4 +90,3 @@ rules:
     let res = eng.load_from_yaml_path(&p);
     assert!(res.is_err(), "expected missing fields to error");
 }
-

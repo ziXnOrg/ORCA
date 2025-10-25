@@ -34,7 +34,7 @@ The following tasks are the highest-priority items from Phase 6a. See the Phase 
 
 ### Enhancement 1 — Advanced Determinism (E1)
 #### crates/event_log
-- [ ] T-6a-E1-EL-01 — WAL v2 schemas + golden tests — AC: WALv2 JSONL schema; stable ordering; golden files; perf budgets; Deps: none; Effort: 2d; Affected: crates/event_log; Tests: unit+golden; Docs: schema ref; Risk: Med; Rollback: wal_v2 flag.
+- [x] T-6a-E1-EL-01 — WAL v2 schemas + golden tests — AC: WALv2 JSONL schema; stable ordering; golden files; perf budgets; Deps: none; Effort: 2d; Affected: crates/event_log; Tests: unit+golden; Docs: schema ref; Risk: Med; Rollback: wal_v2 flag.
   - [ ] Framework: CoT (deterministic data modeling + golden tests)
   - [ ] Context Retrieval
     - [ ] Stratum 1: crates/event_log/src; Quick Start EL-01; Unified Roadmap E1
