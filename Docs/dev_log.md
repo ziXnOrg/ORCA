@@ -1,4 +1,24 @@
 # Development Log
+- Date (UTC): 2025-10-25 08:05
+- Area: Build|CI|Orchestrator
+- Context/Goal: Unblock PR #62 (T-6a-E3-PH-03) by fixing CI failures on macOS+Linux where `protoc` is not preinstalled.
+- Actions:
+  - Added build-dependency `protoc-bin-vendored = "3"` to `crates/orchestrator/Cargo.toml`
+  - Updated `crates/orchestrator/build.rs` to set `PROTOC` to the vendored binary when not provided by env
+  - Ran local validations (fmt/clippy/tests) and pushed fix to `feat/wasmtime-runner-hostcalls`
+- Results:
+  - Local: cargo fmt/check PASS; cargo clippy --workspace -D warnings PASS; cargo test --workspace PASS
+  - CI: new workflow run started for commit 91e9f08; monitoring until green, then proceed to squash-merge
+- Diagnostics:
+  - GitHub Actions runners lacked `protoc`; `prost-build` panicked in build.rs; vendoring ensures reproducible builds across OS matrix
+- Decision(s): Use vendored `protoc` to avoid OS package installs in CI; keep proto schema unchanged
+- Follow-ups:
+  1) Merge PR #62 on green; record merge SHA
+  2) Close Issue #3 with completion comment and validation evidence
+  3) Branch cleanup, sync main, mark TODO complete, append final merge dev-log entry
+  4) Kick off T-6a-E3-SEC-04 on a new branch with TDD
+
+
 - Date (UTC): 2025-10-25 06:57
 - Area: Runtime (plugin_host)
 - Context/Goal: REFACTOR phase (Part 2) for T-6a-E3-PH-03 — enforce CPU/time budgets (fuel + epoch timeout) and add minimal hostcall registry behind a feature flag; keep tests/clippy/fmt green.
