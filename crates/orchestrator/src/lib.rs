@@ -20,6 +20,9 @@ pub mod orca_v1 {
     tonic::include_proto!("orca.v1");
 }
 
+pub mod clock;
+
+
 use orca_v1::{
     orchestrator_server::{Orchestrator, OrchestratorServer},
     *,
