@@ -15,14 +15,9 @@ fn red_integration_invoke_add() {
     let wasm = wat::parse_str(wat).expect("WAT to wasm should succeed");
 
     let runner = PluginRunner::new();
-    let module = runner
-        .load_module(&wasm)
-        .expect("load wasm module via wasmtime runner");
+    let module = runner.load_module(&wasm).expect("load wasm module via wasmtime runner");
 
-    let result = runner
-        .invoke_i32_2(&module, "add", 2, 3)
-        .expect("invoke exported 'add' function");
+    let result = runner.invoke_i32_2(&module, "add", 2, 3).expect("invoke exported 'add' function");
 
     assert_eq!(result, 5);
 }
-

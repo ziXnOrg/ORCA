@@ -1,15 +1,15 @@
-//! Wasmtime runner skeleton + hostcalls (RED): minimal API stubs for T-6a-E3-PH-03.
-//! Implements a `PluginRunner` with unimplemented methods to drive TDD.
+//! Wasmtime runner skeleton + hostcalls (GREEN): minimal Wasmtime-backed runner for T-6a-E3-PH-03.
+//! Uses `wasmtime::{Engine, Module, Store, Linker}` to load and invoke exported functions.
+//! Security posture: no ambient authority by default; WASI not linked yet (no imports required).
 
+use std::sync::Arc;
 use thiserror::Error;
+use wasmtime::{Engine, Instance, Linker, Module, Store};
 
 /// Errors from the plugin runner.
 #[derive(Debug, Error)]
 pub enum RunnerError {
-    /// Placeholder until GREEN: all methods return this in RED phase.
-    #[error("unimplemented")]
-    Unimplemented,
-    /// Loading a module failed.
+    /// Compiling/loading a module failed.
     #[error("load failed: {0}")]
     LoadFailed(String),
     /// Invoking an exported function failed.
@@ -17,46 +17,92 @@ pub enum RunnerError {
     InvokeFailed(String),
 }
 
-/// Opaque handle for a loaded module.
+/// Opaque handle for a loaded module (compiled via Wasmtime `Module`).
 #[derive(Debug, Clone)]
 pub struct ModuleHandle {
-    _private: (),
+    module: Arc<Module>,
 }
 
-/// Minimal Wasmtime-backed plugin runner (stubs in RED phase).
-#[derive(Debug, Default)]
-pub struct PluginRunner;
+impl ModuleHandle {
+    #[inline]
+    fn new(module: Module) -> Self {
+        Self { module: Arc::new(module) }
+    }
+}
+
+/// Minimal Wasmtime-backed plugin runner holding a shared `Engine`.
+#[derive(Clone)]
+pub struct PluginRunner {
+    engine: Arc<Engine>,
+}
+
+impl Default for PluginRunner {
+    fn default() -> Self {
+        // Default Engine config: no special features; safe baseline.
+        let engine = Engine::default();
+        Self { engine: Arc::new(engine) }
+    }
+}
 
 impl PluginRunner {
     /// Create a new runner instance.
-    ///
-    /// This constructor performs no I/O or allocation.
     #[must_use]
-    pub const fn new() -> Self {
-        Self
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    /// Load a wasm module and return an opaque handle.
+    /// Compile WASM bytes into a `Module` and return a handle.
     ///
     /// # Errors
-    /// Returns [`RunnerError::Unimplemented`] in RED phase.
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn load_module(&self, _wasm: &[u8]) -> Result<ModuleHandle, RunnerError> {
-        Err(RunnerError::Unimplemented)
+    /// Returns [`RunnerError::LoadFailed`] when compilation fails.
+    pub fn load_module(&self, wasm: &[u8]) -> Result<ModuleHandle, RunnerError> {
+        Module::new(&self.engine, wasm)
+            .map(ModuleHandle::new)
+            .map_err(|e| RunnerError::LoadFailed(e.to_string()))
     }
 
-    /// Invoke an exported function taking two i32 and returning i32.
+    /// Instantiate the module and invoke a typed export: (i32, i32) -> i32.
     ///
     /// # Errors
-    /// Returns [`RunnerError::Unimplemented`] in RED phase.
-    #[allow(clippy::missing_const_for_fn)]
+    /// Returns [`RunnerError::InvokeFailed`] when instantiation, lookup, or call fails.
     pub fn invoke_i32_2(
         &self,
-        _module: &ModuleHandle,
-        _func: &str,
-        _a: i32,
-        _b: i32,
+        module: &ModuleHandle,
+        func: &str,
+        a: i32,
+        b: i32,
     ) -> Result<i32, RunnerError> {
-        Err(RunnerError::Unimplemented)
+        // No WASI/hostcalls are required for the test module (no imports),
+        // so we use an empty `Store` data and a fresh `Linker`.
+        let mut store: Store<()> = Store::new(&self.engine, ());
+        let linker: Linker<()> = Linker::new(&self.engine);
+
+        let instance: Instance = linker
+            .instantiate(&mut store, &module.module)
+            .map_err(|e| RunnerError::InvokeFailed(e.to_string()))?;
+
+        let func_typed = instance
+            .get_typed_func::<(i32, i32), i32>(&mut store, func)
+            .map_err(|e| RunnerError::InvokeFailed(e.to_string()))?;
+
+        func_typed.call(&mut store, (a, b)).map_err(|e| RunnerError::InvokeFailed(e.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_export_returns_error() {
+        // (module (func (export "add") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add))
+        let wat = r#"(module (func (export "add") (param i32 i32) (result i32)
+            local.get 0 local.get 1 i32.add))"#;
+        let wasm = wat::parse_str(wat).expect("WAT -> WASM should succeed");
+        let runner = PluginRunner::new();
+        let handle = runner.load_module(&wasm).expect("load module");
+        let err = runner.invoke_i32_2(&handle, "missing", 1, 2).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("invoke failed"));
     }
 }
