@@ -210,6 +210,57 @@ impl PluginRunner {
     }
 }
 
+
+/// Plugin manifest describing the WASM module and supply-chain metadata.
+#[derive(Debug, Clone)]
+pub struct PluginManifest {
+    pub name: String,
+    pub version: String,
+    /// Hex-encoded SHA-256 of the WASM bytes (digest pinning).
+    pub wasm_digest: String,
+    /// Base64-encoded signature or Sigstore bundle reference. None => unsigned.
+    pub signature: Option<String>,
+    /// Reference to SBOM (e.g., filename or digest). None => missing per policy.
+    pub sbom_ref: Option<String>,
+}
+
+/// Verification errors for plugin manifests (fail-closed by default).
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum VerificationError {
+    #[error("manifest missing signature")]
+    MissingSignature,
+    #[error("manifest missing SBOM reference")]
+    MissingSbom,
+    #[error("digest mismatch")]
+    DigestMismatch,
+    #[error("invalid signature")]
+    InvalidSignature,
+    #[error("{0}")]
+    Other(String),
+}
+
+/// Offline verifier (no network). Policy: require_signed_plugins=true by default.
+#[derive(Debug, Clone)]
+pub struct ManifestVerifier {
+    pub require_signed_plugins: bool,
+}
+
+impl Default for ManifestVerifier {
+    fn default() -> Self { Self { require_signed_plugins: true } }
+}
+
+impl ManifestVerifier {
+    #[must_use]
+    pub fn new() -> Self { Self::default() }
+
+    /// Verify manifest against provided WASM bytes.
+    ///
+    /// RED-phase stub: always returns Ok(()) to force tests to fail until GREEN.
+    pub fn verify(&self, _manifest: &PluginManifest, _wasm: &[u8]) -> Result<(), VerificationError> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
