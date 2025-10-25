@@ -1,3 +1,25 @@
+- Date (UTC): 2025-10-25 08:34
+- Area: Runtime|Build|CI|Docs
+- Context/Goal: Complete T-6a-E3-PH-03 (Wasmtime runner + hostcalls) by fixing CI, merging PR #62, closing Issue #3, cleaning up branches, syncing main, and recording outcomes.
+- Actions:
+  - Fixed CI duplicate artifact upload by gating upload step to ubuntu-latest in .github/workflows/ci.yml
+  - Monitored CI to green for commit 033188c; all 4 jobs succeeded (ubuntu/macos build-test, otel-and-replay, coverage)
+  - Squash-merged PR #62 with title: refactor(plugin-host): enforce fuel/timeout budgets + feature-gated hostcalls (T-6a-E3-PH-03) (#62)
+  - Closed Issue #3 with validation evidence and merge link; deleted feature branch local+remote; synced main
+  - Ran local validations on main: cargo fmt/clippy/tests all PASS
+  - Updated Docs/TODO.md to mark T-6a-E3-PH-03 complete
+- Results:
+  - CI: success across matrix; merge commit: 52746640b604b8abe17944dfdfc8ad825ea5add7
+  - Local: fmt PASS; clippy PASS; tests PASS (workspace)
+- Diagnostics:
+  - Root cause of earlier CI failure: duplicate artifact name across matrix jobs; resolved via conditional step
+- Decision(s): Keep single-source artifact upload (ubuntu) to avoid conflicts; proceed to next task SEC-04 via TDD
+- Follow-ups:
+  1) Start T-6a-E3-SEC-04 on new branch from main (feat/plugin-manifest-verification)
+  2) RED: failing tests for unsigned/tampered/invalid-sig/missing-SBOM
+  3) GREEN: offline cosign verification, digest pinning, policy gate (fail-closed)
+  4) REFACTOR: observability, docs, fixtures; open PR with evidence
+
 # Development Log
 - Date (UTC): 2025-10-25 08:05
 - Area: Build|CI|Orchestrator
