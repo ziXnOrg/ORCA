@@ -44,3 +44,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [[bench]]
 name = "submit"
 harness = false
+
+
+[[bench]]
+name = "clock"
+harness = false
