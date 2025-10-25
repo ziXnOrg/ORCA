@@ -44,8 +44,8 @@ pub mod metrics {
     //! OTel metrics (OTLP) for budget usage.
     use super::TelemetryError;
     use once_cell::sync::OnceCell;
-    use opentelemetry::metrics::{Counter, Histogram, Meter, Unit};
     use opentelemetry::global;
+    use opentelemetry::metrics::{Counter, Histogram, Meter, Unit};
 
     static METRICS_INIT: OnceCell<()> = OnceCell::new();
 

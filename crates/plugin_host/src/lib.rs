@@ -164,7 +164,8 @@ impl PluginRunner {
                     "env",
                     "host_log",
                     |mut caller: wasmtime::Caller<'_, StoreState>, ptr: i32, len: i32| -> i32 {
-                        let Some(wasmtime::Extern::Memory(mem)) = caller.get_export("memory") else {
+                        let Some(wasmtime::Extern::Memory(mem)) = caller.get_export("memory")
+                        else {
                             return -1;
                         };
                         let Ok(ptr) = usize::try_from(ptr) else {
