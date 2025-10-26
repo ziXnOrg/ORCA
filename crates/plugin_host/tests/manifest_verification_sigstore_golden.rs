@@ -164,3 +164,36 @@ fn sigstore_missing_trust_root_fails() {
         "expected InvalidSignature (no trust root), got: {res:?}"
     );
 }
+
+#[test]
+fn sigstore_default_options_shape() {
+    let d = SigstoreOptions::default();
+    assert!(d.fulcio_cert_pem.is_empty());
+    assert!(d.rekor_key_pem.is_none());
+    assert!(d.ctfe_key_pem.is_empty());
+    assert_eq!(d.issuer_allowlist, vec!["https://fulcio.sigstore.dev".to_string()]);
+    assert!(d.san_allowlist.is_empty());
+}
+
+#[test]
+fn sigstore_ctfe_mismatch_triggers_error_branch() {
+    let wasm = wasm_bytes();
+    let digest_hex = hex::encode(Sha256::digest(&wasm));
+    let manifest = PluginManifest {
+        name: "demo".into(),
+        version: "1.0.0".into(),
+        wasm_digest: digest_hex,
+        signature: Some(read_fixture("valid_bundle.json")),
+        sbom_ref: Some("sbom.json".into()),
+    };
+    // Use a valid PEM (Fulcio cert) as the CTFE key; this will not match the SCT log id and
+    // should cause the Sigstore verifier to fail, exercising the error path.
+    let mut opts = sigstore_opts();
+    opts.ctfe_key_pem = read_bytes("trust/fulcio_root.pem");
+    let v = ManifestVerifier::with_sigstore(opts);
+    let res = v.verify(&manifest, &wasm);
+    assert!(
+        matches!(res, Err(VerificationError::InvalidSignature)),
+        "expected InvalidSignature, got: {res:?}"
+    );
+}
