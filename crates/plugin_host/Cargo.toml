@@ -16,10 +16,14 @@ wasmtime = "24.0.4"
 wasmtime-wasi = "24.0.4"
 tracing = "0.1"
 telemetry = { path = "../telemetry" }
+subtle = "2"
+opentelemetry = { version = "0.22", optional = true }
 
 [features]
 default = []
 hostcalls = []
+opentelemetry = ["dep:opentelemetry"]
+otel = ["telemetry/otel", "opentelemetry"]
 
 [lints]
 workspace = true

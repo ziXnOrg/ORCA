@@ -35,7 +35,7 @@ fn tampered_manifest_fails_verification() {
     let manifest = PluginManifest {
         name: "demo".into(),
         version: "1.0.0".into(),
-        wasm_digest: "0000".into(), // wrong digest
+        wasm_digest: "0000000000000000000000000000000000000000000000000000000000000000".into(), // wrong digest (valid hex length)
         signature: Some("stub-signature".into()),
         sbom_ref: Some("sbom.json".into()),
     };

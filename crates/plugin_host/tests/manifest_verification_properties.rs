@@ -69,4 +69,35 @@ proptest! {
         let res = v.verify(&man, &wasm);
         prop_assert!(matches!(res, Err(VerificationError::InvalidSignature)));
     }
+    // Invalid hex format (wrong length or non-hex char) should be rejected early.
+    #[test]
+    fn invalid_hex_rejected(
+        wasm in proptest::collection::vec(any::<u8>(), 0..256),
+        flip in 0usize..2
+    ) {
+        let hex = digest_hex(&wasm);
+        let bad = if flip == 0 {
+            // Wrong length: drop first char
+            hex[1..].to_string()
+        } else {
+            // Non-hex character appended
+            format!("{hex}g")
+        };
+        let v = ManifestVerifier { require_signed_plugins: false };
+        let man = PluginManifest { name: "p".into(), version: "1".into(), wasm_digest: bad, signature: None, sbom_ref: None };
+        let res = v.verify(&man, &wasm);
+        prop_assert!(matches!(res, Err(VerificationError::InvalidDigestFormat)));
+    }
+
+    // Oversized signature (> 16 KiB after trim) should be rejected.
+    #[test]
+    fn oversized_signature_rejected(wasm in proptest::collection::vec(any::<u8>(), 0..256)) {
+        let hex = digest_hex(&wasm);
+        let sig = "A".repeat(16 * 1024 + 1);
+        let v = ManifestVerifier { require_signed_plugins: false };
+        let man = PluginManifest { name: "p".into(), version: "1".into(), wasm_digest: hex, signature: Some(sig), sbom_ref: Some("sbom.json".into()) };
+        let res = v.verify(&man, &wasm);
+        prop_assert!(matches!(res, Err(VerificationError::OversizedSignature)));
+    }
+
 }

@@ -1,3 +1,26 @@
+- Date (UTC): 2025-10-26 04:45
+- Area: Security|Observability|Tests
+- Context/Goal: Harden plugin manifest verification (T-6a-E3-SEC-04) with strict input validation, timing-safe digest compare, and minimal OTel metrics behind a feature flag before opening PR.
+- Actions:
+  - Added error variants: InvalidDigestFormat, OversizedSignature; documented stable error_code strings
+  - Refactored verify(): normalize+validate digest (64 hex), signature size cap (16 KiB), constant-time digest compare via subtle::ConstantTimeEq
+  - Added feature-gated metrics (otel): Counter plugin.verify.failures{error_code}, Histogram plugin.verify.ms (OnceLock instruments)
+  - Property tests: invalid_hex_rejected, oversized_signature_rejected; adjusted RED test to use valid-length wrong digest
+  - Cargo: added subtle = "2"; added optional opentelemetry with feature alias otel → telemetry/otel + dep
+- Results:
+  - cargo fmt --all --check: PASS
+  - cargo clippy --workspace --all-targets -D warnings: PASS
+  - cargo test --workspace --all-features -- --nocapture: PASS (plugin_host: 5 unit + 7 prop + 4 RED; 1 golden ignored)
+- Diagnostics:
+  - Early reject malformed digest improves determinism and prevents masking of format errors as mismatches
+  - Size cap prevents potential DoS on signature decode path; metrics are no-op unless feature enabled
+- Decision(s):
+  - Signature cap set to 16 KiB; timing-safe compare added via subtle; feature name otel for metrics enablement
+- Follow-ups:
+  - Integrate real Sigstore bundle verification (offline) and add golden fixtures
+  - Author signing runbook and trust root pinning guidance
+
+
 - Date (UTC): 2025-10-26 03:21
 - Area: Runtime|Security|Tests|Observability
 - Context/Goal: REFACTOR phase for T-6a-E3-SEC-04 — add tracing spans, property tests, and golden fixtures for plugin manifest verification; ensure all quality gates pass.

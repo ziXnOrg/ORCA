@@ -3503,10 +3503,12 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "hex",
+ "opentelemetry",
  "pollster",
  "proptest",
  "sha2",
  "sigstore",
+ "subtle",
  "telemetry",
  "thiserror 2.0.17",
  "tracing",
