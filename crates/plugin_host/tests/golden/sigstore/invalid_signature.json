@@ -3,7 +3,7 @@
   "content": {
     "messageSignature": {
       "messageDigest": { "algorithm": "SHA2_256", "digest": "<hex-of-plugin>" },
-      "signature": "<base64-signature>"
+      "signature": "!!!!not-base64!!!!"
     }
   },
   "verificationMaterial": {

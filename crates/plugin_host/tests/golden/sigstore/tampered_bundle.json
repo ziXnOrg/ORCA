@@ -2,10 +2,11 @@
   "mediaType": "application/vnd.dev.sigstore.bundle+json;version=0.1",
   "content": {
     "messageSignature": {
-      "messageDigest": { "algorithm": "SHA2_256", "digest": "<hex-of-plugin>" },
+      "messageDigest": { "algorithm": "SHA2_256", "digest": "<hex-of-original-plugin>" },
       "signature": "<base64-signature>"
     }
   },
+  "tampered": true,
   "verificationMaterial": {
     "x509CertificateChain": {
       "certificates": [ { "rawBytes": "<base64-fulcio-leaf>" } ]
