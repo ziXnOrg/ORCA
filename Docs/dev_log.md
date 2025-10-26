@@ -1,3 +1,24 @@
+- Date (UTC): 2025-10-26 06:43
+- Area: Security|Tests|Docs|Git
+- Context/Goal: Start RED for T-6a-E3-SEC-04a with pre-generated Sigstore golden fixtures and push feature branch for CI tracking.
+- Actions:
+  - Added golden fixtures under crates/plugin_host/tests/golden/sigstore/: trust roots (fulcio_root.pem, rekor_public_key.pem), valid/tampered/invalid bundles, and test_plugin.wasm
+  - Implemented golden tests in manifest_verification_sigstore_golden.rs: valid (expects Ok), tampered/invalid/missing-trust (expect errors)
+  - Ran fmt/clippy and compiled tests (no-run) to ensure build correctness
+  - Committed and pushed branch feat/sigstore-bundle-verification to origin; updated Issue #64 with RED status
+- Results:
+  - cargo fmt --all: PASS; cargo clippy -p plugin_host -D warnings: PASS; cargo test -p plugin_host --no-run: PASS
+  - CI will show RED due to valid-bundle test expecting Ok before integration
+- Diagnostics:
+  - Fixtures are placeholders for structure only; verifier still stubs signature path → InvalidSignature
+  - Next step requires integrating sigstore::bundle::verify::blocking::Verifier with ManualTrustRoot
+- Decision(s):
+  - Proceed to GREEN with offline verifier + SigstoreOptions (issuer_allowlist=["https://fulcio.sigstore.dev"], san_allowlist=[])
+- Follow-ups:
+  - Implement GREEN verification with ManualTrustRoot and identity policy checks; ensure no network I/O; update tests to PASS
+  - Extend docs/runbook with exact CLI to generate bundles and rotate trust roots
+
+
 - Date (UTC): 2025-10-26 06:21
 - Area: Security|Docs|Roadmap
 - Context/Goal: Initiate follow-up for offline Sigstore bundle verification and signing runbook per T-6a-E3-SEC-04 follow-up.
