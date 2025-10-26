@@ -7,7 +7,7 @@ members = [
 	"crates/budget",
 	"crates/policy",
 	"crates/telemetry",
-	"crates/replay-cli", "crates/plugin_host", "scripts/sigstore_fixture_generator",
+	"crates/replay-cli", "crates/plugin_host",
 ]
 
 [workspace.package]
