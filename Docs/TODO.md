@@ -145,6 +145,8 @@ The following tasks are the highest-priority items from Phase 6a. See the Phase 
 #### crates/plugin_host
 - [x] T-6a-E3-PH-03 — Wasmtime runner + hostcalls — AC: as in Quick Start; Deps: T-6a-E1-EL-01; Effort: 3d; Affected: crates/plugin_host; Tests: unit+integration; Docs: authoring; Risk: High; Rollback: disable.
 - [x] T-6a-E3-SEC-04 — Manifest verification (Sigstore) — AC: as above; Deps: T-6a-E3-PH-03; Effort: 2d; Affected: crates/plugin_host; Tests: unit; Docs: signing; Risk: High; Rollback: block unsigned. — Merged via PR #63
+- [ ] T-6a-E3-SEC-04a — Sigstore offline bundle verification + signing runbook — AC: offline ManualTrustRoot; golden fixtures (valid/tampered/invalid); issuer/SAN allowlists; Coverage ≥85%; Docs: Docs/plugin_signing_runbook.md; Milestone: M2; Deps: T-6a-E3-SEC-04; Risk: High; Rollback: keep digest-only and deny unsigned.
+
 - [ ] T-6a-E3-CAP-13 — Capability model (no ambient authority) — AC: per-plugin caps persisted; denied by default; perf budgets; Deps: T-6a-E3-PH-03; Effort: 2d; Affected: crates/plugin_host; Tests: unit+integration; Docs: caps guide; Risk: Med; Rollback: all-caps-off.
   - [ ] Framework: First Principles (least privilege, explicit capability grants)
   - [ ] Context Retrieval

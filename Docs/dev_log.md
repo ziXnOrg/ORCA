@@ -1,3 +1,23 @@
+- Date (UTC): 2025-10-26 06:21
+- Area: Security|Docs|Roadmap
+- Context/Goal: Initiate follow-up for offline Sigstore bundle verification and signing runbook per T-6a-E3-SEC-04 follow-up.
+- Actions:
+  - Created Issue #64 with full AC (offline ManualTrustRoot, golden fixtures, identity policy, docs); labeled enhancement/security/documentation; milestone M2
+  - Created feature branch feat/sigstore-bundle-verification from main
+  - Authored Docs/plugin_signing_runbook.md and created crates/plugin_host/README.md referencing the runbook
+  - Updated Docs/TODO.md with T-6a-E3-SEC-04a task under Enhancement 3
+- Results:
+  - Issue open and tracked in M2; branch ready for TDD (RED → GREEN → REFACTOR)
+  - Documentation committed locally (not pushed); no code changes yet
+- Diagnostics:
+  - sigstore v0.13 supports offline verification via bundle::verify::{blocking,async} Verifier + ManualTrustRoot
+  - Need a deterministic fixture strategy: (A) commit pre-generated bundles/trust roots or (B) generate test CA/certs in dev-deps via rcgen
+- Decision(s):
+  - Proceed docs+planning first; request approval for dev-dependency (rcgen) or for committing binary-like fixtures
+- Follow-ups:
+  - Confirm fixture approach and proceed with RED tests; integrate blocking verifier; add identity allowlists; remove ignored golden test; run fmt/clippy/tests/coverage
+
+
 - Date (UTC): 2025-10-26 05:50
 - Area: Security|Docs|CI
 - Context/Goal: Merge PR #63 (T-6a-E3-SEC-04 Plugin manifest verification) to main; complete hardening; close Issue #4; post-merge validation and documentation updates.
