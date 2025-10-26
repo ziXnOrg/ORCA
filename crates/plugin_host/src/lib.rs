@@ -8,7 +8,45 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+use subtle::ConstantTimeEq;
 use thiserror::Error;
+use tracing::{field, info_span};
+
+#[cfg(feature = "otel")]
+mod verify_metrics {
+    use opentelemetry::metrics::{Counter, Histogram, Meter, Unit};
+    use opentelemetry::{global, KeyValue};
+    use std::sync::OnceLock;
+
+    static INSTR: OnceLock<(Counter<u64>, Histogram<f64>)> = OnceLock::new();
+
+    fn instruments() -> &'static (Counter<u64>, Histogram<f64>) {
+        INSTR.get_or_init(|| {
+            let meter: Meter = global::meter("plugin_host");
+            let failures = meter
+                .u64_counter("plugin.verify.failures")
+                .with_description("Number of manifest verification failures")
+                .init();
+            let verify_ms = meter
+                .f64_histogram("plugin.verify.ms")
+                .with_description("Manifest verification duration (ms)")
+                .with_unit(Unit::new("ms"))
+                .init();
+            (failures, verify_ms)
+        })
+    }
+
+    pub fn inc_failure(error_code: &'static str) {
+        let (c, _) = instruments();
+        c.add(1, &[KeyValue::new("error_code", error_code)]);
+    }
+
+    pub fn observe_ms(ms: f64) {
+        let (_, h) = instruments();
+        h.record(ms, &[]);
+    }
+}
+
 use wasmtime::{Config, Engine, Instance, Linker, Module, Store};
 use wasmtime::{StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::preview1::wasi_snapshot_preview1::add_to_linker as add_wasi_to_linker;
@@ -207,6 +245,227 @@ impl PluginRunner {
                 Err(RunnerError::InvokeFailed(format!("{e}{suffix}")))
             }
         }
+    }
+}
+
+/// Plugin manifest describing the WASM module and supply-chain metadata.
+#[derive(Debug, Clone)]
+pub struct PluginManifest {
+    /// Human-readable plugin name (informational only).
+    pub name: String,
+    /// Semantic version of the plugin (informational only).
+    pub version: String,
+    /// Hex-encoded SHA-256 of the WASM bytes (digest pinning, lowercase preferred).
+    pub wasm_digest: String,
+    /// Base64-encoded signature or Sigstore bundle material. None => unsigned.
+    pub signature: Option<String>,
+    /// Reference to SBOM (e.g., filename or digest). None => missing per policy.
+    pub sbom_ref: Option<String>,
+}
+
+/// Verification errors for plugin manifests (fail-closed by default).
+///
+/// Stable `error_code` strings (used in spans/metrics):
+/// - `missing_signature`
+/// - `missing_sbom`
+/// - `digest_mismatch`
+/// - `invalid_signature`
+/// - `invalid_digest_format`
+/// - `oversized_signature`
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum VerificationError {
+    /// Signature is required but missing (`require_signed_plugins=true`).
+    #[error("manifest missing signature")]
+    MissingSignature,
+    /// SBOM reference is required but missing (`require_signed_plugins=true`).
+    #[error("manifest missing SBOM reference")]
+    MissingSbom,
+    /// The `manifest.wasm_digest` is not exactly 64 hex chars after trim+lowercase.
+    #[error("invalid digest format")]
+    InvalidDigestFormat,
+    /// WASM digest did not match `manifest.wasm_digest`.
+    #[error("digest mismatch")]
+    DigestMismatch,
+    /// Signature present but exceeds size cap (16 KiB after trim).
+    #[error("oversized signature")]
+    OversizedSignature,
+    /// Signature present but failed offline verification/decoding.
+    #[error("invalid signature")]
+    InvalidSignature,
+    /// Other error category.
+    #[error("{0}")]
+    Other(String),
+}
+
+/// Offline verifier (no network). Policy: `require_signed_plugins=true` by default.
+impl From<base64::DecodeError> for VerificationError {
+    fn from(_e: base64::DecodeError) -> Self {
+        Self::InvalidSignature
+    }
+}
+
+const MAX_SIG_LEN: usize = 16 * 1024;
+
+fn normalize_and_validate_digest(s: &str) -> Result<[u8; 32], VerificationError> {
+    let norm = s.trim().to_ascii_lowercase();
+    if norm.len() != 64 || !norm.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(VerificationError::InvalidDigestFormat);
+    }
+    let bytes = hex::decode(&norm).map_err(|_| VerificationError::InvalidDigestFormat)?;
+    if bytes.len() != 32 {
+        return Err(VerificationError::InvalidDigestFormat);
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&bytes);
+    Ok(arr)
+}
+
+fn validate_signature_size(s: &str) -> Result<(), VerificationError> {
+    let len = s.trim().len();
+    if len > MAX_SIG_LEN {
+        return Err(VerificationError::OversizedSignature);
+    }
+    Ok(())
+}
+
+/// Offline manifest verifier (deterministic, fail-closed).
+#[derive(Debug, Clone)]
+pub struct ManifestVerifier {
+    /// When true, signatures and SBOM references are required; deny on any error.
+    pub require_signed_plugins: bool,
+}
+
+impl Default for ManifestVerifier {
+    fn default() -> Self {
+        Self { require_signed_plugins: true }
+    }
+}
+
+impl ManifestVerifier {
+    /// Construct a verifier with default fail-closed policy (require signatures).
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Verify manifest against provided WASM bytes.
+    ///
+    /// Deterministic, offline-only; no network I/O or wall-clock dependencies.
+    ///
+    /// # Errors
+    /// Returns:
+    /// - `VerificationError::MissingSignature` when a signature is required but not present.
+    /// - `VerificationError::MissingSbom` when SBOM reference is required but missing.
+    /// - `VerificationError::DigestMismatch` when the WASM digest does not match the manifest.
+    /// - `VerificationError::InvalidSignature` when signature decoding/verification fails.
+    pub fn verify(&self, manifest: &PluginManifest, wasm: &[u8]) -> Result<(), VerificationError> {
+        use base64::engine::general_purpose::STANDARD;
+        use base64::Engine as _;
+        use sha2::Digest as _;
+
+        // Observability span (no control-path changes).
+        let span =
+            info_span!("agent.plugin.verify", result = field::Empty, error_code = field::Empty);
+        let _g = span.enter();
+        #[cfg(feature = "otel")]
+        let __start = std::time::Instant::now();
+
+        // Policy gates first: require signature and SBOM if configured.
+        if self.require_signed_plugins {
+            if manifest.signature.is_none() {
+                span.record("result", "error");
+                span.record("error_code", field::display("missing_signature"));
+                #[cfg(feature = "otel")]
+                {
+                    verify_metrics::inc_failure("missing_signature");
+                    verify_metrics::observe_ms(__start.elapsed().as_secs_f64() * 1000.0);
+                }
+                return Err(VerificationError::MissingSignature);
+            }
+            if manifest.sbom_ref.is_none() {
+                span.record("result", "error");
+                span.record("error_code", field::display("missing_sbom"));
+                #[cfg(feature = "otel")]
+                {
+                    verify_metrics::inc_failure("missing_sbom");
+                    verify_metrics::observe_ms(__start.elapsed().as_secs_f64() * 1000.0);
+                }
+                return Err(VerificationError::MissingSbom);
+            }
+        }
+
+        // Validate manifest digest format and decode expected digest bytes.
+        let expected = match normalize_and_validate_digest(&manifest.wasm_digest) {
+            Ok(b) => b,
+            Err(e) => {
+                span.record("result", "error");
+                span.record("error_code", field::display("invalid_digest_format"));
+                #[cfg(feature = "otel")]
+                {
+                    verify_metrics::inc_failure("invalid_digest_format");
+                    verify_metrics::observe_ms(__start.elapsed().as_secs_f64() * 1000.0);
+                }
+                return Err(e);
+            }
+        };
+
+        // Digest pinning: sha256(WASM) must equal manifest.wasm_digest (hex, case-insensitive).
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(wasm);
+        let actual_vec = hasher.finalize();
+        let mut actual = [0u8; 32];
+        actual.copy_from_slice(&actual_vec);
+        if !bool::from(actual.ct_eq(&expected)) {
+            span.record("result", "error");
+            span.record("error_code", field::display("digest_mismatch"));
+            #[cfg(feature = "otel")]
+            {
+                verify_metrics::inc_failure("digest_mismatch");
+                verify_metrics::observe_ms(__start.elapsed().as_secs_f64() * 1000.0);
+            }
+            return Err(VerificationError::DigestMismatch);
+        }
+
+        // Offline signature verification: for now, require base64-encoded material and
+        // return InvalidSignature if decoding or offline verification fails. This remains
+        // offline and deterministic; network is not used.
+        if let Some(sig) = &manifest.signature {
+            let s = sig.trim();
+            if let Err(e) = validate_signature_size(s) {
+                span.record("result", "error");
+                span.record("error_code", field::display("oversized_signature"));
+                #[cfg(feature = "otel")]
+                {
+                    verify_metrics::inc_failure("oversized_signature");
+                    verify_metrics::observe_ms(__start.elapsed().as_secs_f64() * 1000.0);
+                }
+                return Err(e);
+            }
+            if STANDARD.decode(s).is_err() {
+                span.record("result", "error");
+                span.record("error_code", field::display("invalid_signature"));
+                #[cfg(feature = "otel")]
+                {
+                    verify_metrics::inc_failure("invalid_signature");
+                    verify_metrics::observe_ms(__start.elapsed().as_secs_f64() * 1000.0);
+                }
+                return Err(VerificationError::InvalidSignature);
+            }
+            // TODO(SEC-04 follow-up): integrate sigstore offline verification against a pinned trust root/bundle.
+            span.record("result", "error");
+            span.record("error_code", field::display("invalid_signature"));
+            #[cfg(feature = "otel")]
+            {
+                verify_metrics::inc_failure("invalid_signature");
+                verify_metrics::observe_ms(__start.elapsed().as_secs_f64() * 1000.0);
+            }
+            return Err(VerificationError::InvalidSignature);
+        }
+
+        span.record("result", "ok");
+        #[cfg(feature = "otel")]
+        verify_metrics::observe_ms(__start.elapsed().as_secs_f64() * 1000.0);
+        Ok(())
     }
 }
 
