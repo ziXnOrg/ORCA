@@ -18,6 +18,8 @@ tracing = "0.1"
 telemetry = { path = "../telemetry" }
 subtle = "2"
 opentelemetry = { version = "0.22", optional = true }
+serde_json = "1"
+rustls-pki-types = "1"
 
 [features]
 default = []

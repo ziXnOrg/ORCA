@@ -1,4 +1,31 @@
 - Date (UTC): 2025-10-26 06:43
+- Date (UTC): 2025-10-26 07:22
+- Area: Security|Tests|Build|Docs
+- Context/Goal: GREEN completion for T-6a-E3-SEC-04a — implement offline Sigstore bundle verification with SCT and regenerate golden fixtures.
+- Actions:
+  - Implemented offline Sigstore verification in plugin_host using sigstore v0.13.0 with ManualTrustRoot and Identity policy (issuer + SAN)
+  - Added optional CTFE keyring support (PEM SPKI) and verified embedded SCT in leaf certs (RFC 6962)
+  - Created fixture generator at scripts/sigstore_fixture_generator/ (rcgen + x509-cert + tls-codec) to deterministically produce: Fulcio root, CTFE pubkey, SCT-embedded leaf, and bundle JSONs
+  - Fixed bundle structure (camelCase: logId), DER vs raw ECDSA signature (use DER), PEM formatting parity via x509-cert, and prehash signing for SHA-256 digest
+  - Regenerated golden fixtures under crates/plugin_host/tests/golden/sigstore/
+  - Ran validations: fmt, clippy, unit/property/golden tests, workspace test run
+- Results:
+  - cargo fmt --all -- --check: PASS (after fmt)
+  - cargo clippy -p plugin_host -D warnings: PASS
+  - cargo test -p plugin_host --test manifest_verification_sigstore_golden: PASS (4/4)
+  - cargo test --workspace -- --nocapture: PASS (all crates)
+- Diagnostics:
+  - Signature verification required DER-encoded ECDSA and prehash signing; raw 64-byte signatures fail verification
+  - Rekor consistency check compares canonicalizedBody against expected hashedrekord using base64 PEM from x509-cert; rcgen PEM formatting mismatched until switched to x509-cert to_pem(LineEnding::LF)
+  - SCT issuer_key_hash must use CA SPKI DER; SCT signature in DER over TLS-serialized Precert payload
+- Decision(s):
+  - Keep generator deterministic via fixed seeds; embed SCTs and pin trust roots; remain fully offline and deterministic in tests
+  - Proceed to open PR with evidence; update Issue #64 with GREEN status
+- Follow-ups:
+  - Optional: Track potential migration to library support for precert TBS construction; keep manual TLS assembly with tests until then
+  - File post-PR follow-up if needed for alternative SCT generation approaches (rcgen/x509-cert upgrades)
+
+
 - Area: Security|Tests|Docs|Git
 - Context/Goal: Start RED for T-6a-E3-SEC-04a with pre-generated Sigstore golden fixtures and push feature branch for CI tracking.
 - Actions:
