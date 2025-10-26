@@ -32,6 +32,8 @@ pub struct Engine {
     pii: Regex,
     rules: Vec<Rule>,
     tool_allowlist: Option<HashSet<String>>, // deny-by-default when present and tool not allowed
+    /// True once a valid policy has been loaded; fail-closed when false.
+    policy_loaded: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -67,7 +69,7 @@ impl Engine {
     #[must_use]
     pub fn new() -> Self {
         let pii = Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").unwrap();
-        Self { pii, rules: Vec::new(), tool_allowlist: None }
+        Self { pii, rules: Vec::new(), tool_allowlist: None, policy_loaded: false }
     }
 
     pub fn load_from_yaml_path<P: AsRef<std::path::Path>>(
@@ -126,6 +128,7 @@ impl Engine {
 
         self.rules = pf.rules;
         self.tool_allowlist = tool_allowlist;
+        self.policy_loaded = true;
         Ok(())
     }
 
@@ -154,6 +157,17 @@ impl Engine {
         if matches!(d.kind, DecisionKind::Modify) {
             return d;
         }
+        // Fail-closed: deny when no valid policy is loaded
+        if !self.policy_loaded {
+            return Decision {
+                kind: DecisionKind::Deny,
+                payload: None,
+                reason: Some("no valid policy loaded".into()),
+                rule_name: Some("fail_closed_default".into()),
+                action: Some("deny".into()),
+            };
+        }
+
         // 2) Tool allowlist enforcement (deny by default when a tool is present and not allowed)
         if let Some(dec) = self.check_tool_allowlist(envelope) {
             return dec;
