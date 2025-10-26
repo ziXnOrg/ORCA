@@ -703,6 +703,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let log = JsonlEventLog::open(dir.path().join("x.jsonl")).unwrap();
         let svc = OrchestratorService::new(log);
+        // Load a permissive policy to accommodate fail-closed baseline in tests
+        let policy_path = dir.path().join("policy.yaml");
+        std::fs::write(&policy_path, "rules: []\n").unwrap();
+        svc.load_policy_from_path(&policy_path).unwrap();
+
         let env = orca_v1::Envelope {
             id: "dup".into(),
             parent_id: "".into(),

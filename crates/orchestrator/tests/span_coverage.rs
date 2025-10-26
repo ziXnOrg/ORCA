@@ -38,6 +38,11 @@ async fn spans_present_for_key_paths() {
     let log = event_log::JsonlEventLog::open(dir.path().join("x.jsonl")).unwrap();
     let svc = OrchestratorService::new(log);
 
+    // Load a permissive policy to accommodate fail-closed baseline in tests
+    let policy_path = dir.path().join("policy.yaml");
+    std::fs::write(&policy_path, "rules: []\n").unwrap();
+    svc.load_policy_from_path(&policy_path).unwrap();
+
     // start_run path
     let env = orca_v1::Envelope {
         id: "e0".into(),

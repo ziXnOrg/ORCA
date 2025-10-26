@@ -9,6 +9,11 @@ async fn warn_and_exceed_budget() {
     let log = JsonlEventLog::open(dir.path().join("b.jsonl")).unwrap();
     let svc = OrchestratorService::new(log);
 
+    // Load a permissive policy to accommodate fail-closed baseline in tests
+    let policy_path = dir.path().join("policy.yaml");
+    std::fs::write(&policy_path, "rules: []\n").unwrap();
+    svc.load_policy_from_path(&policy_path).unwrap();
+
     // Start run with very small token budget (1 token max)
     let start = StartRunRequest {
         workflow_id: "run1".into(),
@@ -61,6 +66,11 @@ async fn isolation_between_runs() {
     let dir = tempfile::tempdir().unwrap();
     let log = JsonlEventLog::open(dir.path().join("c.jsonl")).unwrap();
     let svc = OrchestratorService::new(log);
+
+    // Load a permissive policy to accommodate fail-closed baseline in tests
+    let policy_path = dir.path().join("policy.yaml");
+    std::fs::write(&policy_path, "rules: []\n").unwrap();
+    svc.load_policy_from_path(&policy_path).unwrap();
 
     let start1 = StartRunRequest {
         workflow_id: "rA".into(),

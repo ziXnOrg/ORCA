@@ -9,7 +9,12 @@ use tonic::transport::Server;
 async fn spawn_server() -> (String, tokio::task::JoinHandle<()>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let log = JsonlEventLog::open(dir.path().join("it.jsonl")).unwrap();
-    let svc = OrchestratorService::new(log).into_server();
+    let svc_impl = OrchestratorService::new(log);
+    // Load a permissive policy to accommodate fail-closed baseline in tests
+    let policy_path = dir.path().join("policy.yaml");
+    std::fs::write(&policy_path, "rules: []\n").unwrap();
+    svc_impl.load_policy_from_path(&policy_path).unwrap();
+    let svc = svc_impl.into_server();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let h = tokio::spawn(async move {
