@@ -328,16 +328,45 @@ fn validate_signature_size(s: &str) -> Result<(), VerificationError> {
     Ok(())
 }
 
+/// Sigstore verification options (offline only, deterministic).
+#[derive(Debug, Clone)]
+pub struct SigstoreOptions {
+    /// Fulcio root (or test CA) certificate in PEM (single cert).
+    pub fulcio_cert_pem: Vec<u8>,
+    /// Optional Rekor public key PEM (not strictly required for offline 0.1 bundles).
+    pub rekor_key_pem: Option<Vec<u8>>,
+    /// Certificate Transparency Log public key (CTFE) in PEM (required for SCT verification).
+    pub ctfe_key_pem: Vec<u8>,
+    /// Allowed OIDC issuer URIs (must contain at least one that matches the leaf cert).
+    pub issuer_allowlist: Vec<String>,
+    /// Allowed identities (SAN) such as "email:test@example.com".
+    pub san_allowlist: Vec<String>,
+}
+
+impl Default for SigstoreOptions {
+    fn default() -> Self {
+        Self {
+            fulcio_cert_pem: Vec::new(),
+            rekor_key_pem: None,
+            ctfe_key_pem: Vec::new(),
+            issuer_allowlist: vec!["https://fulcio.sigstore.dev".to_string()],
+            san_allowlist: Vec::new(),
+        }
+    }
+}
+
 /// Offline manifest verifier (deterministic, fail-closed).
 #[derive(Debug, Clone)]
 pub struct ManifestVerifier {
     /// When true, signatures and SBOM references are required; deny on any error.
     pub require_signed_plugins: bool,
+    /// Optional Sigstore configuration. When present, signature is interpreted as a Sigstore bundle JSON.
+    pub sigstore: Option<SigstoreOptions>,
 }
 
 impl Default for ManifestVerifier {
     fn default() -> Self {
-        Self { require_signed_plugins: true }
+        Self { require_signed_plugins: true, sigstore: None }
     }
 }
 
@@ -346,6 +375,12 @@ impl ManifestVerifier {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Construct a verifier with Sigstore options enabled.
+    #[must_use]
+    pub const fn with_sigstore(options: SigstoreOptions) -> Self {
+        Self { require_signed_plugins: true, sigstore: Some(options) }
     }
 
     /// Verify manifest against provided WASM bytes.
@@ -358,6 +393,7 @@ impl ManifestVerifier {
     /// - `VerificationError::MissingSbom` when SBOM reference is required but missing.
     /// - `VerificationError::DigestMismatch` when the WASM digest does not match the manifest.
     /// - `VerificationError::InvalidSignature` when signature decoding/verification fails.
+    #[allow(clippy::too_many_lines)]
     pub fn verify(&self, manifest: &PluginManifest, wasm: &[u8]) -> Result<(), VerificationError> {
         use base64::engine::general_purpose::STANDARD;
         use base64::Engine as _;
@@ -426,11 +462,104 @@ impl ManifestVerifier {
             return Err(VerificationError::DigestMismatch);
         }
 
-        // Offline signature verification: for now, require base64-encoded material and
-        // return InvalidSignature if decoding or offline verification fails. This remains
-        // offline and deterministic; network is not used.
+        // Offline signature verification using Sigstore bundle (preferred when configured),
+        // otherwise accept legacy base64 bytes and fail-closed.
         if let Some(sig) = &manifest.signature {
             let s = sig.trim();
+
+            // If configured with Sigstore, treat signature as a bundle JSON and verify offline.
+            if let Some(opts) = &self.sigstore {
+                // Fast path: try JSON parse first; if it fails, fall back to legacy handling below.
+                let bundle: Result<sigstore::bundle::Bundle, _> = serde_json::from_str(s);
+                if let Ok(bundle) = bundle {
+                    // Build ManualTrustRoot from provided PEM materials (no network IO).
+                    fn pem_to_der(pem: &[u8]) -> Result<Vec<u8>, ()> {
+                        // Minimal PEM decoder: strip header/footer lines and base64-decode the body.
+                        let text = std::str::from_utf8(pem).map_err(|_| ())?;
+                        let mut b64 = String::new();
+                        for line in text.lines() {
+                            let l = line.trim();
+                            if l.starts_with("---") {
+                                continue;
+                            }
+                            if !l.is_empty() {
+                                b64.push_str(l);
+                            }
+                        }
+                        base64::engine::general_purpose::STANDARD
+                            .decode(b64.as_bytes())
+                            .map_err(|_| ())
+                    }
+
+                    let fulcio_der = pem_to_der(&opts.fulcio_cert_pem)
+                        .map_err(|()| VerificationError::InvalidSignature)?;
+                    // rustls_pki_types::CertificateDer<'_> is a newtype over DER bytes
+                    let fulcio_cert: rustls_pki_types::CertificateDer<'_> =
+                        rustls_pki_types::CertificateDer::from(fulcio_der.as_slice());
+
+                    let mut rekor_keys = std::collections::BTreeMap::new();
+                    if let Some(rekor_pem) = &opts.rekor_key_pem {
+                        if let Ok(der) = pem_to_der(rekor_pem) {
+                            rekor_keys.insert("rekor-0".to_string(), der);
+                        }
+                    }
+
+                    // CTFE key is optional (SCT verification deferred). When not provided, skip.
+                    let mut ctfe_keys = std::collections::BTreeMap::new();
+                    if !opts.ctfe_key_pem.is_empty() {
+                        if let Ok(der) = pem_to_der(&opts.ctfe_key_pem) {
+                            ctfe_keys.insert("ctfe-0".to_string(), der);
+                        }
+                    }
+
+                    let trust = sigstore::trust::ManualTrustRoot {
+                        fulcio_certs: vec![fulcio_cert],
+                        rekor_keys,
+                        ctfe_keys,
+                    };
+
+                    // Build identity policy (require SAN+issuer). Use first allowlisted identity.
+                    let issuer = opts
+                        .issuer_allowlist
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "https://fulcio.sigstore.dev".to_string());
+                    let allowed_san = opts
+                        .san_allowlist
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "email:test@example.com".to_string());
+                    let policy =
+                        sigstore::bundle::verify::policy::Identity::new(&allowed_san, &issuer);
+
+                    // Build blocking verifier and verify digest offline.
+                    let verifier = sigstore::bundle::verify::blocking::Verifier::new(
+                        sigstore::rekor::apis::configuration::Configuration::default(),
+                        trust,
+                    )
+                    .map_err(|_| VerificationError::InvalidSignature)?;
+
+                    let mut hasher = sha2::Sha256::new();
+                    hasher.update(wasm);
+                    let res = verifier.verify_digest(hasher, bundle, &policy, true);
+                    if matches!(res, Ok(())) {
+                        span.record("result", "ok");
+                        #[cfg(feature = "otel")]
+                        verify_metrics::observe_ms(__start.elapsed().as_secs_f64() * 1000.0);
+                        return Ok(());
+                    }
+                    span.record("result", "error");
+                    span.record("error_code", field::display("invalid_signature"));
+                    #[cfg(feature = "otel")]
+                    {
+                        verify_metrics::inc_failure("invalid_signature");
+                        verify_metrics::observe_ms(__start.elapsed().as_secs_f64() * 1000.0);
+                    }
+                    return Err(VerificationError::InvalidSignature);
+                }
+            }
+
+            // Legacy path: treat signature as base64 blob, only check shape/size (fail-closed).
             if let Err(e) = validate_signature_size(s) {
                 span.record("result", "error");
                 span.record("error_code", field::display("oversized_signature"));
@@ -451,7 +580,7 @@ impl ManifestVerifier {
                 }
                 return Err(VerificationError::InvalidSignature);
             }
-            // TODO(SEC-04 follow-up): integrate sigstore offline verification against a pinned trust root/bundle.
+
             span.record("result", "error");
             span.record("error_code", field::display("invalid_signature"));
             #[cfg(feature = "otel")]

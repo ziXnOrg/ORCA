@@ -18,7 +18,7 @@ proptest! {
         let upper = hex.to_ascii_uppercase();
         let mixed: String = hex.chars().enumerate().map(|(i, c)| if i % 2 == 0 { c.to_ascii_uppercase() } else { c }).collect();
 
-        let v = ManifestVerifier { require_signed_plugins: false };
+        let v = ManifestVerifier { require_signed_plugins: false, sigstore: None };
 
         let man_upper = PluginManifest { name: "p".into(), version: "1".into(), wasm_digest: upper, signature: None, sbom_ref: None };
         prop_assert!(v.verify(&man_upper, &wasm).is_ok());
@@ -32,7 +32,7 @@ proptest! {
     fn digest_whitespace_trimmed(wasm in proptest::collection::vec(any::<u8>(), 0..256)) {
         let hex = digest_hex(&wasm);
         let spaced = format!("  {hex}  ");
-        let v = ManifestVerifier { require_signed_plugins: false };
+        let v = ManifestVerifier { require_signed_plugins: false, sigstore: None };
         let man = PluginManifest { name: "p".into(), version: "1".into(), wasm_digest: spaced, signature: None, sbom_ref: None };
         prop_assert!(v.verify(&man, &wasm).is_ok());
     }
@@ -41,7 +41,7 @@ proptest! {
     #[test]
     fn missing_signature_when_required(wasm in proptest::collection::vec(any::<u8>(), 0..256)) {
         let hex = digest_hex(&wasm);
-        let v = ManifestVerifier { require_signed_plugins: true };
+        let v = ManifestVerifier { require_signed_plugins: true, sigstore: None };
         let man = PluginManifest { name: "p".into(), version: "1".into(), wasm_digest: hex, signature: None, sbom_ref: None };
         let res = v.verify(&man, &wasm);
         prop_assert!(matches!(res, Err(VerificationError::MissingSignature)));
@@ -51,7 +51,7 @@ proptest! {
     #[test]
     fn missing_sbom_when_required(wasm in proptest::collection::vec(any::<u8>(), 0..256)) {
         let hex = digest_hex(&wasm);
-        let v = ManifestVerifier { require_signed_plugins: true };
+        let v = ManifestVerifier { require_signed_plugins: true, sigstore: None };
         let man = PluginManifest { name: "p".into(), version: "1".into(), wasm_digest: hex, signature: Some("AQ==".into()), sbom_ref: None };
         let res = v.verify(&man, &wasm);
         prop_assert!(matches!(res, Err(VerificationError::MissingSbom)));
@@ -64,7 +64,7 @@ proptest! {
         bad in "[^A-Za-z0-9+/=]{1,16}"
     ) {
         let hex = digest_hex(&wasm);
-        let v = ManifestVerifier { require_signed_plugins: false };
+        let v = ManifestVerifier { require_signed_plugins: false, sigstore: None };
         let man = PluginManifest { name: "p".into(), version: "1".into(), wasm_digest: hex, signature: Some(bad), sbom_ref: Some("sbom.json".into()) };
         let res = v.verify(&man, &wasm);
         prop_assert!(matches!(res, Err(VerificationError::InvalidSignature)));
@@ -83,7 +83,7 @@ proptest! {
             // Non-hex character appended
             format!("{hex}g")
         };
-        let v = ManifestVerifier { require_signed_plugins: false };
+        let v = ManifestVerifier { require_signed_plugins: false, sigstore: None };
         let man = PluginManifest { name: "p".into(), version: "1".into(), wasm_digest: bad, signature: None, sbom_ref: None };
         let res = v.verify(&man, &wasm);
         prop_assert!(matches!(res, Err(VerificationError::InvalidDigestFormat)));
@@ -94,7 +94,7 @@ proptest! {
     fn oversized_signature_rejected(wasm in proptest::collection::vec(any::<u8>(), 0..256)) {
         let hex = digest_hex(&wasm);
         let sig = "A".repeat(16 * 1024 + 1);
-        let v = ManifestVerifier { require_signed_plugins: false };
+        let v = ManifestVerifier { require_signed_plugins: false, sigstore: None };
         let man = PluginManifest { name: "p".into(), version: "1".into(), wasm_digest: hex, signature: Some(sig), sbom_ref: Some("sbom.json".into()) };
         let res = v.verify(&man, &wasm);
         prop_assert!(matches!(res, Err(VerificationError::OversizedSignature)));

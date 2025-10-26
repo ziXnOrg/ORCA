@@ -3506,6 +3506,8 @@ dependencies = [
  "opentelemetry",
  "pollster",
  "proptest",
+ "rustls-pki-types",
+ "serde_json",
  "sha2",
  "sigstore",
  "subtle",
@@ -4001,6 +4003,18 @@ checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
+]
+
+[[package]]
+name = "rcgen"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48406db8ac1f3cbc7dcdb56ec355343817958a356ff430259bb07baf7607e1e1"
+dependencies = [
+ "pem",
+ "ring",
+ "time",
+ "yasna",
 ]
 
 [[package]]
@@ -4773,6 +4787,30 @@ checksum = "80baa401f274093f7bb27d7a69d6139cbc11f1b97624e9a61a9b3ea32c776a35"
 dependencies = [
  "quote",
  "syn 2.0.107",
+]
+
+[[package]]
+name = "sigstore_fixture_generator"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "const-oid",
+ "der",
+ "ecdsa",
+ "hex",
+ "p256",
+ "pem",
+ "rand 0.8.5",
+ "rcgen",
+ "rustls-pki-types",
+ "serde_json",
+ "sha2",
+ "signature",
+ "sigstore",
+ "spki",
+ "tls_codec",
+ "x509-cert",
 ]
 
 [[package]]
@@ -6815,6 +6853,15 @@ dependencies = [
  "signature",
  "spki",
  "tls_codec",
+]
+
+[[package]]
+name = "yasna"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e17bb3549cc1321ae1296b9cdc2698e2b6cb1992adfa19a8c72e5b7a738f44cd"
+dependencies = [
+ "time",
 ]
 
 [[package]]
