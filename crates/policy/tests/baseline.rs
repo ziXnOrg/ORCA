@@ -5,22 +5,14 @@ use std::path::PathBuf;
 
 fn write_temp_yaml(name: &str, content: &str) -> PathBuf {
     let mut p = std::env::temp_dir();
-    p.push(format!(
-        "policy_baseline_{}_{}_{}.yaml",
-        name,
-        std::process::id(),
-        rand_suffix()
-    ));
+    p.push(format!("policy_baseline_{}_{}_{}.yaml", name, std::process::id(), rand_suffix()));
     fs::write(&p, content).expect("write temp yaml");
     p
 }
 
 fn rand_suffix() -> u128 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos()
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
 }
 
 #[test]
@@ -83,11 +75,7 @@ fn modify_on_pii_redacts_payload() {
     let d = eng.pre_submit_task(&env);
     assert!(matches!(d.kind, DecisionKind::Modify));
     let modified = d.payload.expect("expected modified payload");
-    let s = modified
-        .get("payload_json")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    let s = modified.get("payload_json").and_then(|v| v.as_str()).unwrap_or("").to_string();
     assert!(!s.contains("123-45-6789"));
     assert!(s.contains("[REDACTED]"));
     assert_eq!(d.rule_name.as_deref(), Some("builtin_redact_pii"));
@@ -240,4 +228,3 @@ rules:
     let db = eng_b.pre_submit_task(&env_b);
     assert!(matches!(db.kind, DecisionKind::Deny));
 }
-
