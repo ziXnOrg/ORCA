@@ -1,3 +1,45 @@
+- Date (UTC): 2025-10-26 21:51
+- Area: Testing
+- Context/Goal: Raise plugin_host/src/lib.rs line coverage from 89.3% to ≥90% to satisfy the core-path quality gate per testing-validation.md.
+- Actions:
+  - Added two minimal tests in crates/plugin_host/tests/manifest_verification_sigstore_golden.rs:
+    - sigstore_default_options_shape() — exercises SigstoreOptions::default()
+    - sigstore_ctfe_mismatch_triggers_error_branch() — mismatched CTFE key to drive Sigstore error branch deterministically
+  - Ran coverage: cargo llvm-cov -p plugin_host --text --output-path target/plugin_host_final.txt --show-missing-lines; and LCOV summary to confirm counts
+  - Validations: cargo test -p plugin_host -- --nocapture; cargo clippy -p plugin_host -- -D warnings; cargo fmt --all -- --check
+  - Committed tests and pushed to feat/sigstore-bundle-verification; posted coverage delta on PR #65
+- Results:
+  - lib.rs coverage improved to 93.4% (297/318 lines); functions 22/29; branch coverage not collected
+  - All tests PASS (22 total: 4 unit + 17 integration + 1 runner)
+  - Clippy and rustfmt clean
+- Diagnostics:
+  - Uncovered lines traced to defaults (SigstoreOptions::default()) and the Sigstore verification error path (lines 550–552, 558–559)
+  - CTFE mismatch via valid-but-wrong PEM reliably triggers the verifier error branch without altering fixtures
+- Decision(s):
+  - Keep production code unchanged; raise coverage via targeted tests that follow existing golden patterns; update PR #65 with evidence
+- Follow-ups:
+  - PR #65 ready for review; all quality gates pass (≥85% overall, ≥90% core). Append a post-merge dev-log entry after squash-merge and workflow completion.
+
+
+- Date (UTC): 2025-10-26 18:26
+- Area: Security|Docs|Git
+- Context/Goal: Finalize GREEN for T-6a-E3-SEC-04a by committing deterministic fixtures, opening PR, and updating tracking.
+- Actions:
+  - Committed code changes for offline Sigstore verification (SCT embedded) and fixture generator (commit aed84ae)
+  - Committed generated golden fixtures separately with message: "feat(plugin-host): add Sigstore offline bundle verification fixtures" (commit 3a8cebb)
+  - Pushed branch `feat/sigstore-bundle-verification` and opened PR #65 (removing auto footer); linked to Issue #64
+  - Updated Issue #64 with GREEN completion evidence and PR link; created follow-up Issue #66 for SCT generator maintainability
+- Results:
+  - Local validation: cargo fmt --all -- --check PASS; cargo clippy -p plugin_host -D warnings PASS; cargo test --workspace -- --nocapture PASS
+  - Sigstore golden tests: 4/4 PASS (valid verifies; tampered/invalid/missing-trust fail)
+- Diagnostics:
+  - Resolved nested git repo under scripts/sigstore_fixture_generator by removing its internal .git before committing
+- Decision(s):
+  - Keep manual SCT/Precert construction (deterministic, well-tested); evaluate library alternatives in #66
+- Follow-ups:
+  - Await review on PR #65; on merge, perform standard end-of-task workflow and append final merge entry
+
+
 - Date (UTC): 2025-10-26 06:43
 - Date (UTC): 2025-10-26 07:22
 - Area: Security|Tests|Build|Docs
