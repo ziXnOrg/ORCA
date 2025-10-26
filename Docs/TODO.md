@@ -20,7 +20,7 @@ The following tasks are the highest-priority items from Phase 6a. See the Phase 
 1. T-6a-E1-EL-01 — Define WAL v2 schemas + golden tests (see Phase 6a)
 2. T-6a-E1-ORCH-02 — Virtual Time service (Clock trait) + injection (see Phase 6a)
 3. [x] T-6a-E3-PH-03 — Wasmtime runner skeleton + hostcalls (see Phase 6a)
-4. T-6a-E3-SEC-04 — Plugin manifest verification (Sigstore/Cosign) (see Phase 6a)
+4. [x] T-6a-E3-SEC-04 — Plugin manifest verification (Sigstore/Cosign) (see Phase 6a) — Merged via PR #63
 5. T-6a-E2-POL-05 — Governance baseline (deny-on-error, taxonomy, ordering) (see Phase 6a)
 6. T-6a-E4-BS-06 — Blob Store MVP (CAS + zstd + enc-at-rest) (see Phase 6a)
 7. T-6a-E4-ORCH-07 — Envelope attachments + BlobRef in WAL (see Phase 6a)
@@ -144,7 +144,7 @@ The following tasks are the highest-priority items from Phase 6a. See the Phase 
 ### Enhancement 3 — Plugin Architecture (E3)
 #### crates/plugin_host
 - [x] T-6a-E3-PH-03 — Wasmtime runner + hostcalls — AC: as in Quick Start; Deps: T-6a-E1-EL-01; Effort: 3d; Affected: crates/plugin_host; Tests: unit+integration; Docs: authoring; Risk: High; Rollback: disable.
-- [ ] T-6a-E3-SEC-04 — Manifest verification (Sigstore) — AC: as above; Deps: T-6a-E3-PH-03; Effort: 2d; Affected: crates/plugin_host; Tests: unit; Docs: signing; Risk: High; Rollback: block unsigned.
+- [x] T-6a-E3-SEC-04 — Manifest verification (Sigstore) — AC: as above; Deps: T-6a-E3-PH-03; Effort: 2d; Affected: crates/plugin_host; Tests: unit; Docs: signing; Risk: High; Rollback: block unsigned. — Merged via PR #63
 - [ ] T-6a-E3-CAP-13 — Capability model (no ambient authority) — AC: per-plugin caps persisted; denied by default; perf budgets; Deps: T-6a-E3-PH-03; Effort: 2d; Affected: crates/plugin_host; Tests: unit+integration; Docs: caps guide; Risk: Med; Rollback: all-caps-off.
   - [ ] Framework: First Principles (least privilege, explicit capability grants)
   - [ ] Context Retrieval
