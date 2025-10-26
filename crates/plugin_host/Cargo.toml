@@ -14,7 +14,8 @@ sigstore = "0.13.0"
 thiserror = "2.0.17"
 wasmtime = "24.0.4"
 wasmtime-wasi = "24.0.4"
-
+tracing = "0.1"
+telemetry = { path = "../telemetry" }
 
 [features]
 default = []
@@ -25,3 +26,4 @@ workspace = true
 
 [dev-dependencies]
 wat = "1.207.0"
+proptest = "1"

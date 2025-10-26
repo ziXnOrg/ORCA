@@ -9,6 +9,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
+use tracing::{field, info_span};
 use wasmtime::{Config, Engine, Instance, Linker, Module, Store};
 use wasmtime::{StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::preview1::wasi_snapshot_preview1::add_to_linker as add_wasi_to_linker;
@@ -278,12 +279,24 @@ impl ManifestVerifier {
     pub fn verify(&self, manifest: &PluginManifest, wasm: &[u8]) -> Result<(), VerificationError> {
         // Bring hashing trait methods into scope.
         use sha2::Digest as _;
+        // Observability span (no control-path changes).
+        let span = info_span!(
+            "agent.plugin.verify",
+            result = field::Empty,
+            error_code = field::Empty
+        );
+        let _g = span.enter();
+
         // Policy gates first: require signature and SBOM if configured.
         if self.require_signed_plugins {
             if manifest.signature.is_none() {
+                span.record("result", "error");
+                span.record("error_code", field::display("missing_signature"));
                 return Err(VerificationError::MissingSignature);
             }
             if manifest.sbom_ref.is_none() {
+                span.record("result", "error");
+                span.record("error_code", field::display("missing_sbom"));
                 return Err(VerificationError::MissingSbom);
             }
         }
@@ -294,6 +307,8 @@ impl ManifestVerifier {
         let digest_hex = hex::encode(hasher.finalize());
         let expected = manifest.wasm_digest.trim().to_ascii_lowercase();
         if digest_hex != expected {
+            span.record("result", "error");
+            span.record("error_code", field::display("digest_mismatch"));
             return Err(VerificationError::DigestMismatch);
         }
 
@@ -305,14 +320,19 @@ impl ManifestVerifier {
             use base64::engine::general_purpose::STANDARD;
             use base64::Engine as _;
             if STANDARD.decode(sig).is_err() {
+                span.record("result", "error");
+                span.record("error_code", field::display("invalid_signature"));
                 return Err(VerificationError::InvalidSignature);
             }
             // TODO(SEC-04 GREEN+): integrate sigstore offline verification against
             // a pinned trust root/bundle. Until valid fixtures are added, conservatively
             // fail to avoid accepting unverified signatures.
+            span.record("result", "error");
+            span.record("error_code", field::display("invalid_signature"));
             return Err(VerificationError::InvalidSignature);
         }
 
+        span.record("result", "ok");
         Ok(())
     }
 }

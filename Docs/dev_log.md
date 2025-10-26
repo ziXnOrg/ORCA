@@ -1,3 +1,50 @@
+- Date (UTC): 2025-10-26 03:21
+- Area: Runtime|Security|Tests|Observability
+- Context/Goal: REFACTOR phase for T-6a-E3-SEC-04 — add tracing spans, property tests, and golden fixtures for plugin manifest verification; ensure all quality gates pass.
+- Actions:
+  - Instrumented ManifestVerifier::verify() with span `agent.plugin.verify` and attributes {result, error_code}; no control-path changes
+  - Added property tests (proptest) for digest normalization/case-folding, whitespace trimming, required-signature/SBOM errors, and base64 signature validation
+  - Added golden fixture scaffolding under crates/plugin_host/tests/golden/sigstore; created ignored test with explicit reason pending real bundles
+  - Resolved clippy issues: items_after_statements; needless_borrows_for_generic_args; added #![allow(missing_docs)] to test crates; provided #[ignore = "..."] reason
+  - Validations: cargo fmt --all -- --check; cargo clippy --workspace --all-targets --all-features -- -D warnings; cargo test --workspace --all-features -- --nocapture (all PASS)
+- Results:
+  - plugin_host: unit + property tests PASS; sigstore golden test ignored with reason; tracing compiles and is neutral without subscriber
+  - Workspace: fmt/clippy/tests all PASS; no new warnings; deterministic behavior preserved
+- Diagnostics:
+  - Clippy flagged missing-docs for test crates and ignore_without_reason; fixed via crate-level allow and explicit ignore reason
+  - Observability added without altering outcomes; spans are attributes-only
+- Decision(s):
+  - Keep signature verification fail-closed until real offline Sigstore bundles are integrated; metrics wiring via telemetry to be added behind feature flag in a follow-up
+- Follow-ups:
+  1) Integrate cosign-style Sigstore bundles (offline) and wire verification using `sigstore`
+  2) Add OTel metrics via telemetry (feature-gated), plus span-to-metric mapping
+  3) Draft signing runbook and add golden fixtures with pinned trust roots
+
+
+- Date (UTC): 2025-10-25 22:09
+- Area: Runtime|Security|Tests|Docs
+- Context/Goal: GREEN phase for T-6a-E3-SEC-04 — implement offline plugin manifest verification (digest pinning, policy gates) in plugin_host and confirm workspace validations.
+- Actions:
+  - Added dependencies: sha2, hex, base64, sigstore (offline only; no network)
+  - Implemented ManifestVerifier::verify(): require signature + SBOM when policy enabled; compute sha256(WASM) and compare to manifest.wasm_digest (hex, case-insensitive); base64 signature material sanity check; fail-closed on signature verification pending fixtures
+  - Updated tests: compute correct digest in invalid_signature_fails_verification to isolate signature path; kept other RED tests intact
+  - Rustdoc and clippy clean-ups (missing-errors-doc, doc-markdown, items-after-statements)
+  - Ran local validations: cargo fmt --all -- --check; cargo clippy --workspace -D warnings; cargo test --workspace -- --nocapture (all PASS)
+- Results:
+  - plugin_host: 4/4 tests PASS (manifest verification RED suite now GREEN); unit + integration tests stable
+  - Workspace: all crates build and tests pass; clippy/fmt clean
+  - Commit: 612480c (branch: feat/plugin-manifest-verification)
+- Diagnostics:
+  - Initial failure due to incorrect digest in test fixture; computing digest from WAT → WASM fixed the expectation so signature path is exercised
+  - Signature verification remains fail-closed (InvalidSignature) until we introduce offline Sigstore bundle fixtures
+- Decision(s):
+  - Proceed to REFACTOR: add observability (plugin.verify.ms, plugin.verify.failures), property tests for digest parsing/case-folding, and golden fixtures for sigstore bundles; wire actual offline verification against a pinned trust root
+- Follow-ups:
+  1) Implement offline Sigstore verification using cosign-style bundle (no network); add test fixtures
+  2) Add metrics/traces and structured errors; document signing runbook
+  3) Update Issue #4 with GREEN completion and begin REFACTOR subsections
+
+
 - Date (UTC): 2025-10-25 08:34
 - Area: Runtime|Build|CI|Docs
 - Context/Goal: Complete T-6a-E3-PH-03 (Wasmtime runner + hostcalls) by fixing CI, merging PR #62, closing Issue #3, cleaning up branches, syncing main, and recording outcomes.
