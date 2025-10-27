@@ -18,6 +18,23 @@
 //! allow decrypting existing blobs during transition windows; this crate does not persist
 //! key IDs and assumes the reader can supply historical keys when needed.
 
+//!
+//! BS2 Streaming Format (bounded-memory)
+//! - Header (9 bytes): magic "BS2\0" (4), version = 1 (1), chunk_size (u32 BE) (4)
+//! - Body: repeated [len_be (u32)][ciphertext bytes] where each ciphertext is AES-256-GCM of up to
+//!   `chunk_size` bytes of zstd-compressed data. Each chunk carries its own auth tag.
+//! - Nonce scheme: deterministic 96-bit nonce constructed as `(prefix || counter_be32)`, where
+//!   `prefix = SHA256(key || digest)[..12]` and `counter_be32` increments from 0 per chunk.
+//!   This yields stable ciphertext per (key, digest) and supports idempotent writes/dedup.
+//! - Determinism: plaintext digest is SHA-256 over uncompressed bytes; compression uses a fixed level
+//!   (default 3). With the same key and input, digests and ciphertext are stable.
+//! - Memory bounds: working set is O(chunk_size) (default 64 KiB) for both put and get paths; there are
+//!   no large, unbounded allocations on the control path. Temp files are used for compressed payloads.
+//! - Legacy compatibility: blobs without the BS2 header are treated as legacy single-shot (nonce-prefix only)
+//!   ciphertext of a full compressed stream. Reads remain supported; new writes use BS2.
+//! - Fail-closed: header/version mismatch, auth tag failures, or digest mismatches return typed errors.
+//!
+
 //! Determinism Guarantees
 //! - `Digest` identity is computed on plaintext only.
 //! - Compression uses a fixed zstd level (default 3) for stable output.
@@ -167,11 +184,21 @@ fn observer() -> &'static dyn BlobStoreObserver {
     }
 }
 
-// Streaming format header (new in BS2)
+/// BS2 header constants and default chunk size.
+///
+/// Header layout:
+/// - magic:    4 bytes, ASCII "BS2\0"
+/// - version:  1 byte, currently 1
+/// - chunk_sz: 4 bytes, big-endian u32 (default 65536)
 const FILE_MAGIC: [u8; 4] = *b"BS2\0";
 const FILE_VERSION: u8 = 1;
+/// Default plaintext/compressed chunk size (bounds memory on read/write)
 const CHUNK_SIZE: usize = 64 * 1024; // 64 KiB
 
+/// Derive a deterministic 96-bit nonce prefix from (key, digest).
+/// The per-chunk nonce is constructed as `prefix[..8] || counter_be32`.
+/// This ensures stable ciphertext per (key, digest) while preserving AEAD security
+/// at the chunk granularity (fresh counter per chunk).
 fn derive_nonce_prefix(key_bytes: [u8; 32], digest: &Digest) -> [u8; 12] {
     let mut h = sha2::Sha256::default();
     ShaUpdateTrait::update(&mut h, &key_bytes);
@@ -182,15 +209,20 @@ fn derive_nonce_prefix(key_bytes: [u8; 32], digest: &Digest) -> [u8; 12] {
     out
 }
 
+/// Writer adapter that forwards bytes while computing a SHA-256 over the
+/// plaintext stream and counting total bytes written. Used to verify integrity
+/// against the expected `Digest` without buffering.
 struct HashingWriter<W: Write> {
     inner: W,
     hasher: sha2::Sha256,
     count: usize,
 }
 impl<W: Write> HashingWriter<W> {
+    /// Create a new hashing writer that wraps `inner`.
     fn new(inner: W) -> Self {
         Self { inner, hasher: sha2::Sha256::default(), count: 0 }
     }
+    /// Finalize and return (inner, digest_bytes, total_bytes).
     fn finalize(self) -> (W, [u8; 32], usize) {
         let out = ShaFixedOutputTrait::finalize_fixed(self.hasher);
         let mut d = [0u8; 32];
@@ -209,7 +241,12 @@ impl<W: Write> Write for HashingWriter<W> {
     }
 }
 
-// Reader that yields decrypted compressed bytes from an encrypted blob file.
+/// Reader that yields decrypted, compressed bytes from a BS2 blob file.
+///
+/// It repeatedly reads `[len_be][ciphertext]` chunks, constructs a per-chunk nonce as
+/// `prefix[..8] || counter_be32`, decrypts with AES-256-GCM, and exposes the resulting
+/// compressed bytes via `Read`. The zstd `read::Decoder` sits atop this reader to produce
+/// plaintext without buffering entire files, keeping memory bounded by `chunk_size`.
 struct DecryptedCompressedReader {
     file: fs::File,
     cipher: Aes256Gcm,
@@ -323,7 +360,17 @@ impl<K: KeyProvider> BlobStore<K> {
         self.put_reader(Cursor::new(bytes))
     }
 
-    /// Streaming put from any reader, with bounded memory and deterministic nonce.
+    /// Streaming put from any reader.
+    ///
+    /// Pipeline:
+    /// 1) Hash plaintext while zstd-compressing to a temporary file (no large buffers)
+    /// 2) Encrypt compressed stream in chunks with BS2 header and deterministic nonces
+    /// 3) Atomic rename to final path; record logical plaintext bytes in observer
+    ///
+    /// Determinism & bounds:
+    /// - Digest computed on plaintext; fixed zstd level
+    /// - Nonce prefix = SHA256(key||digest)[..12], counter_be32 per chunk
+    /// - Working set bounded by `CHUNK_SIZE`
     pub fn put_reader<R: Read>(&self, mut reader: R) -> Result<Digest, Error> {
         let _span = observer().span("blob.put");
 
@@ -474,7 +521,14 @@ impl<K: KeyProvider> BlobStore<K> {
         Ok(out)
     }
 
-    /// Streaming read: decrypt+decompress to provided writer, returning bytes written.
+    /// Streaming read: decrypt + zstd-decompress into `writer`.
+    ///
+    /// Behavior:
+    /// - If BS2 header present: stream `[len][ct]` chunks → decrypt with per-chunk nonce →
+    ///   zstd `read::Decoder` → hashing writer; verify computed digest == expected
+    /// - Else (legacy): single-shot decrypt (nonce = prefix) of full compressed stream and
+    ///   stream-decompress via `read::Decoder`
+    /// - Returns total plaintext bytes written; increments observer counters.
     pub fn get_to_writer<W: Write>(&self, digest: &Digest, mut writer: W) -> Result<usize, Error> {
         let _span = observer().span("blob.get");
 
