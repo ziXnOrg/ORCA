@@ -1,6 +1,29 @@
-//! Policy engine interfaces (Phase 5 target; integrated in Phase 2).
+//! ORCA Governance Policy Engine
+//!
+//! This crate provides a deterministic, fail-closed policy engine used to guard
+//! orchestration events. The security baseline is deny-on-error: if no valid
+//! policy is loaded or an evaluation precondition is not met, decisions default
+//! to Deny. Built-in PII redaction is applied first to protect sensitive data.
+//!
+//! Decision taxonomy:
+//! - Allow — proceed unchanged
+//! - Deny — block the action (fail-closed default on error/misconfig)
+//! - Modify — proceed with a redacted/rewritten payload (e.g., PII redaction)
+//! - Flag — represented as `Allow` with `action == "allow_but_flag"` for audit
+//!
+//! Precedence and determinism:
+//! 1) Built-in PII redaction (returns Modify immediately if applied)
+//! 2) Fail-closed check: if no valid policy is loaded ⇒ Deny
+//! 3) Tool allowlist enforcement
+//! 4) Rule interpreter:
+//!    - Highest priority wins (larger priority is higher)
+//!    - Tie-breaker: most-restrictive-wins (Deny > Modify > Allow)
+//!    - Still tied: first-match-wins (stable file order)
+//!
+//! All evaluations are designed to be deterministic for a given policy and input.
 
 #![deny(unsafe_code)]
+#![warn(missing_docs)]
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -9,47 +32,70 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::io::BufReader;
 
+/// Kind of policy decision returned by the policy engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum DecisionKind {
+    /// Permit the action without changes.
     Allow,
+    /// Block the action (fail-closed default on error/misconfig).
     Deny,
+    /// Allow the action with modifications (e.g., redaction).
     Modify,
 }
 
+/// Result of evaluating a governance policy against an input envelope.
 #[derive(Debug, Clone, Serialize)]
 pub struct Decision {
+    /// The overall decision kind produced by evaluation.
     pub kind: DecisionKind,
+    /// Optional modified payload when the decision is `Modify`; `None` otherwise.
     pub payload: Option<Value>,
+    /// Human-readable reason for the decision if available.
     pub reason: Option<String>,
     /// Name of the rule that triggered this decision (if any)
     pub rule_name: Option<String>,
-    /// Action declared by the rule (e.g., deny | modify | allow_but_flag)
+    /// Action declared by the rule (e.g., `deny` | `modify` | `allow_but_flag`).
     pub action: Option<String>,
 }
 
+/// Deterministic policy engine implementing fail-closed governance semantics.
 #[derive(Debug, Clone)]
 pub struct Engine {
     pii: Regex,
     rules: Vec<Rule>,
     tool_allowlist: Option<HashSet<String>>, // deny-by-default when present and tool not allowed
+    /// True once a valid policy file has been loaded successfully. While `false`,
+    /// evaluations are fail-closed (`DecisionKind::Deny`) after builtin PII redaction.
+    policy_loaded: bool,
 }
 
+/// In-memory representation of a policy file loaded from YAML.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PolicyFile {
+    /// Declarative list of rules to evaluate.
     pub rules: Vec<Rule>,
+    /// Optional global allowlist of tool names (case-insensitive). When present,
+    /// tools not listed will be denied by default.
     #[serde(default)]
-    pub tool_allowlist: Option<Vec<String>>, // optional top-level allowlist
+    pub tool_allowlist: Option<Vec<String>>,
 }
 
+/// A single policy rule compiled from YAML.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Rule {
+    /// Human-readable name of the rule (unique within a file is recommended).
     pub name: String,
+    /// Condition string; matching is implementation-defined for the current baseline.
     pub when: String,
+    /// Action to take: one of `deny`, `modify`, or `allow_but_flag`.
     pub action: String,
+    /// Optional human-readable message explaining the decision.
     #[serde(default)]
     pub message: Option<String>,
+    /// Optional severity/level (reserved for future use).
     #[serde(default)]
     pub level: Option<String>,
+    /// Optional transform hint; for example, `regex:<pattern>` for modify rules.
     #[serde(default)]
     pub transform: Option<String>,
     /// Higher number = higher priority. Defaults to 0 for backward compatibility.
@@ -64,12 +110,19 @@ impl Default for Engine {
 }
 
 impl Engine {
+    /// Construct a new `Engine`. Initially, no policy is loaded; evaluation is
+    /// fail-closed (Deny) after builtin PII redaction until a valid policy is loaded.
     #[must_use]
     pub fn new() -> Self {
         let pii = Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").unwrap();
-        Self { pii, rules: Vec::new(), tool_allowlist: None }
+        Self { pii, rules: Vec::new(), tool_allowlist: None, policy_loaded: false }
     }
 
+    /// Load a policy from a YAML file at `path`.
+    ///
+    /// Validates schema, tool allowlist, and transforms; on success marks the engine
+    /// as policy-loaded. Returns an error string describing the first validation
+    /// failure encountered.
     pub fn load_from_yaml_path<P: AsRef<std::path::Path>>(
         &mut self,
         path: P,
@@ -126,17 +179,21 @@ impl Engine {
 
         self.rules = pf.rules;
         self.tool_allowlist = tool_allowlist;
+        self.policy_loaded = true;
         Ok(())
     }
 
+    /// Evaluate a policy prior to starting a run, returning a deterministic decision.
     pub fn pre_start_run(&self, envelope: &Value) -> Decision {
         self.apply_rules_then_redact(envelope, Some("pre_start_run"))
     }
 
+    /// Evaluate a policy prior to submitting a task, returning a deterministic decision.
     pub fn pre_submit_task(&self, envelope: &Value) -> Decision {
         self.apply_rules_then_redact(envelope, Some("pre_submit_task"))
     }
 
+    /// Evaluate a policy after submitting a task; current baseline always allows.
     pub fn post_submit_task(&self, _result: &Value) -> Decision {
         Decision {
             kind: DecisionKind::Allow,
@@ -147,6 +204,11 @@ impl Engine {
         }
     }
 
+    /// Apply the evaluation pipeline in deterministic order:
+    /// 1) Built-in PII redaction (returns `Modify` immediately if applied)
+    /// 2) Fail-closed deny if no valid policy is loaded
+    /// 3) Tool allowlist enforcement
+    /// 4) Rule interpreter with precedence (priority -> most-restrictive -> first-match)
     fn apply_rules_then_redact(&self, envelope: &Value, _phase: Option<&str>) -> Decision {
         // 1) Built-in PII redaction first (fail-closed if needed in callers)
         //    If PII is detected, return immediately with a Modify decision.
@@ -154,6 +216,17 @@ impl Engine {
         if matches!(d.kind, DecisionKind::Modify) {
             return d;
         }
+        // Fail-closed: deny when no valid policy is loaded
+        if !self.policy_loaded {
+            return Decision {
+                kind: DecisionKind::Deny,
+                payload: None,
+                reason: Some("no valid policy loaded".into()),
+                rule_name: Some("fail_closed_default".into()),
+                action: Some("deny".into()),
+            };
+        }
+
         // 2) Tool allowlist enforcement (deny by default when a tool is present and not allowed)
         if let Some(dec) = self.check_tool_allowlist(envelope) {
             return dec;

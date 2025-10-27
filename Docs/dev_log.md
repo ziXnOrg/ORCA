@@ -1,3 +1,27 @@
+- Date (UTC): 2025-10-26 22:59
+- Area: Policy
+- Context/Goal: Complete T-6a-E2-POL-05 (Governance baseline) with fail-closed deny-on-error semantics, deterministic precedence, and documentation; finalize RED→GREEN→REFACTOR.
+- Actions:
+  - RED: added 10 baseline tests in crates/policy/tests/baseline.rs (deny-on-error, taxonomy, precedence, determinism)
+  - GREEN: implemented policy_loaded flag + fail-closed check after builtin PII redaction; preserved tool allowlist and precedence
+  - REFACTOR: comprehensive rustdoc (module + public items), enabled #![warn(missing_docs)], added method docs incl. evaluation order
+  - Validations run: cargo test -p policy -- --nocapture; cargo clippy -p policy -- -D warnings; cargo fmt --all -- --check; cargo doc -p policy --no-deps
+- Results:
+  - Tests: PASS (21/21 across baseline/priority/redaction/validation suites)
+  - Clippy: PASS (no warnings)
+  - rustfmt: PASS (after applying fmt)
+  - Docs: PASS (cargo doc builds clean)
+  - Behavior: deny when no valid policy loaded; PII redaction remains first; deterministic precedence intact
+- Diagnostics:
+  - Ordering confirmed: PII redaction → fail-closed check → allowlist → rules (priority → most-restrictive → first-match)
+  - Addressed clippy::empty-line-after-doc-comments by removing blank lines after doc comments
+- Decision(s): Adopt fail-closed baseline for policy engine; enforce documentation via missing_docs; keep existing taxonomy and precedence unchanged
+- Follow-ups:
+  1) Optional: expose Engine::is_policy_loaded() for observability/tests
+  2) Add metrics counters for decisions (policy.decision.count{allow,deny,modify}) in a future observability pass
+  3) Author admin docs for YAML schema and precedence examples
+
+
 - Date (UTC): 2025-10-26 05:50
 - Area: Security|Docs|CI
 - Context/Goal: Merge PR #63 (T-6a-E3-SEC-04 Plugin manifest verification) to main; complete hardening; close Issue #4; post-merge validation and documentation updates.
