@@ -35,13 +35,13 @@ pub enum Error {
     #[error("integrity: authentication tag mismatch or digest mismatch")]
     Integrity,
     /// Blob not found
-    #[error("not found")] 
+    #[error("not found")]
     NotFound,
     /// Detected partial/incomplete write artifact
-    #[error("partial write detected")] 
+    #[error("partial write detected")]
     PartialWriteDetected,
     /// Wrong key used for decrypting
-    #[error("wrong key or decryption failed")] 
+    #[error("wrong key or decryption failed")]
     WrongKey,
 }
 
@@ -58,11 +58,15 @@ pub struct DevKeyProvider {
 
 impl DevKeyProvider {
     /// Create with the provided 32-byte key
-    pub fn new(key: [u8; 32]) -> Self { Self { key } }
+    pub fn new(key: [u8; 32]) -> Self {
+        Self { key }
+    }
 }
 
 impl KeyProvider for DevKeyProvider {
-    fn key_bytes(&self) -> [u8; 32] { self.key }
+    fn key_bytes(&self) -> [u8; 32] {
+        self.key
+    }
 }
 
 /// Blob store configuration
@@ -76,7 +80,9 @@ pub struct Config {
 
 impl Config {
     /// Default config with level 3
-    pub fn with_root(root: PathBuf) -> Self { Self { root, zstd_level: 3 } }
+    pub fn with_root(root: PathBuf) -> Self {
+        Self { root, zstd_level: 3 }
+    }
 }
 
 /// Blob Store API
@@ -114,10 +120,7 @@ impl<K: KeyProvider> BlobStore<K> {
     /// Store bytes and return their content digest (CAS). Idempotent on same content.
     pub fn put(&self, _bytes: &[u8]) -> Result<Digest, Error> {
         // RED-phase stub: not implemented yet
-        Err(Error::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "not implemented (RED)",
-        )))
+        Err(Error::Io(std::io::Error::new(std::io::ErrorKind::Other, "not implemented (RED)")))
     }
 
     /// Retrieve plaintext bytes by digest
@@ -141,7 +144,8 @@ impl<K: KeyProvider> BlobStore<K> {
 /// Helper to build a deterministic test buffer of given size
 pub fn deterministic_bytes(len: usize) -> Vec<u8> {
     let mut v = Vec::with_capacity(len);
-    for i in 0..len { v.push((i as u8).wrapping_mul(37).wrapping_add(11)); }
+    for i in 0..len {
+        v.push((i as u8).wrapping_mul(37).wrapping_add(11));
+    }
     v
 }
-

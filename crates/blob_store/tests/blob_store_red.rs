@@ -4,7 +4,9 @@ use std::path::PathBuf;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-fn temp_dir() -> tempfile::TempDir { tempfile::tempdir().unwrap() }
+fn temp_dir() -> tempfile::TempDir {
+    tempfile::tempdir().unwrap()
+}
 
 fn store_at(path: &std::path::Path, key: [u8; 32]) -> BlobStore<DevKeyProvider> {
     let cfg = Config::with_root(path.to_path_buf());
@@ -114,4 +116,3 @@ fn deterministic_behavior_across_runs_and_hosts() -> Result<()> {
 
     Ok(())
 }
-
