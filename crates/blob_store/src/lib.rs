@@ -18,6 +18,23 @@
 //! allow decrypting existing blobs during transition windows; this crate does not persist
 //! key IDs and assumes the reader can supply historical keys when needed.
 
+//!
+//! BS2 Streaming Format (bounded-memory)
+//! - Header (9 bytes): magic "BS2\0" (4), version = 1 (1), chunk_size (u32 BE) (4)
+//! - Body: repeated [len_be (u32)][ciphertext bytes] where each ciphertext is AES-256-GCM of up to
+//!   `chunk_size` bytes of zstd-compressed data. Each chunk carries its own auth tag.
+//! - Nonce scheme: deterministic 96-bit nonce constructed as `(prefix || counter_be32)`, where
+//!   `prefix = SHA256(key || digest)[..12]` and `counter_be32` increments from 0 per chunk.
+//!   This yields stable ciphertext per (key, digest) and supports idempotent writes/dedup.
+//! - Determinism: plaintext digest is SHA-256 over uncompressed bytes; compression uses a fixed level
+//!   (default 3). With the same key and input, digests and ciphertext are stable.
+//! - Memory bounds: working set is O(chunk_size) (default 64 KiB) for both put and get paths; there are
+//!   no large, unbounded allocations on the control path. Temp files are used for compressed payloads.
+//! - Legacy compatibility: blobs without the BS2 header are treated as legacy single-shot (nonce-prefix only)
+//!   ciphertext of a full compressed stream. Reads remain supported; new writes use BS2.
+//! - Fail-closed: header/version mismatch, auth tag failures, or digest mismatches return typed errors.
+//!
+
 //! Determinism Guarantees
 //! - `Digest` identity is computed on plaintext only.
 //! - Compression uses a fixed zstd level (default 3) for stable output.
@@ -43,13 +60,13 @@ use std::any::Any;
 use std::io::Cursor;
 use std::{
     fs,
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     sync::OnceLock,
 };
 
 use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
-use zstd::stream::{decode_all as zstd_decode_all, encode_all as zstd_encode_all};
+use sha2::digest::{FixedOutput as ShaFixedOutputTrait, Update as ShaUpdateTrait};
 
 /// 32-byte SHA-256 digest type
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -167,6 +184,137 @@ fn observer() -> &'static dyn BlobStoreObserver {
     }
 }
 
+/// BS2 header constants and default chunk size.
+///
+/// Header layout:
+/// - magic:    4 bytes, ASCII "BS2\0"
+/// - version:  1 byte, currently 1
+/// - chunk_sz: 4 bytes, big-endian u32 (default 65536)
+const FILE_MAGIC: [u8; 4] = *b"BS2\0";
+const FILE_VERSION: u8 = 1;
+/// Default plaintext/compressed chunk size (bounds memory on read/write)
+const CHUNK_SIZE: usize = 64 * 1024; // 64 KiB
+/// AEAD tag size for AES-256-GCM (bytes)
+const AEAD_TAG_SIZE: usize = 16;
+/// Absolute upper bound for header-declared chunk size to avoid pathological allocations
+const MAX_CHUNK_SIZE: usize = 4 * 1024 * 1024; // 4 MiB hard cap
+
+/// Derive a deterministic 96-bit nonce prefix from (key, digest).
+/// The per-chunk nonce is constructed as `prefix[..8] || counter_be32`.
+/// This ensures stable ciphertext per (key, digest) while preserving AEAD security
+/// at the chunk granularity (fresh counter per chunk).
+fn derive_nonce_prefix(key_bytes: [u8; 32], digest: &Digest) -> [u8; 12] {
+    let mut h = sha2::Sha256::default();
+    ShaUpdateTrait::update(&mut h, &key_bytes);
+    ShaUpdateTrait::update(&mut h, &digest.0);
+    let n = ShaFixedOutputTrait::finalize_fixed(h);
+    let mut out = [0u8; 12];
+    out.copy_from_slice(&n[..12]);
+    out
+}
+
+/// Writer adapter that forwards bytes while computing a SHA-256 over the
+/// plaintext stream and counting total bytes written. Used to verify integrity
+/// against the expected `Digest` without buffering.
+struct HashingWriter<W: Write> {
+    inner: W,
+    hasher: sha2::Sha256,
+    count: usize,
+}
+impl<W: Write> HashingWriter<W> {
+    /// Create a new hashing writer that wraps `inner`.
+    fn new(inner: W) -> Self {
+        Self { inner, hasher: sha2::Sha256::default(), count: 0 }
+    }
+    /// Finalize and return (inner, digest_bytes, total_bytes).
+    fn finalize(self) -> (W, [u8; 32], usize) {
+        let out = ShaFixedOutputTrait::finalize_fixed(self.hasher);
+        let mut d = [0u8; 32];
+        d.copy_from_slice(&out);
+        (self.inner, d, self.count)
+    }
+}
+impl<W: Write> Write for HashingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        ShaUpdateTrait::update(&mut self.hasher, buf);
+        self.count += buf.len();
+        self.inner.write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// Reader that yields decrypted, compressed bytes from a BS2 blob file.
+///
+/// It repeatedly reads `[len_be][ciphertext]` chunks, constructs a per-chunk nonce as
+/// `prefix[..8] || counter_be32`, decrypts with AES-256-GCM, and exposes the resulting
+/// compressed bytes via `Read`. The zstd `read::Decoder` sits atop this reader to produce
+/// plaintext without buffering entire files, keeping memory bounded by `chunk_size`.
+struct DecryptedCompressedReader {
+    file: fs::File,
+    cipher: Aes256Gcm,
+    nonce_prefix: [u8; 12],
+    counter: u32,
+    buf: Vec<u8>,
+    pos: usize,
+    // Enforced upper bound from BS2 header; prevents oversize allocations
+    chunk_size: usize,
+}
+impl DecryptedCompressedReader {
+    fn refill(&mut self) -> Result<(), Error> {
+        let mut len_buf = [0u8; 4];
+        match self.file.read_exact(&mut len_buf) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                self.buf.clear();
+                self.pos = 0;
+                return Ok(());
+            }
+            Err(e) => return Err(Error::Io(e)),
+        }
+        let clen = u32::from_be_bytes(len_buf) as usize;
+        // Bound checks before allocating/reading to avoid unbounded growth
+        if clen == 0 || clen > self.chunk_size + AEAD_TAG_SIZE {
+            return Err(Error::Integrity);
+        }
+        self.buf.resize(clen, 0);
+        self.file.read_exact(&mut self.buf)?;
+        let mut nonce_bytes = [0u8; 12];
+        nonce_bytes[..8].copy_from_slice(&self.nonce_prefix[..8]);
+        nonce_bytes[8..].copy_from_slice(&self.counter.to_be_bytes());
+        #[allow(deprecated)]
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let pt = self
+            .cipher
+            .decrypt(nonce, self.buf.as_ref())
+            .map_err(|_| Error::Crypto("decrypt".into()))?;
+        self.buf = pt;
+        self.pos = 0;
+        self.counter = self.counter.wrapping_add(1);
+        Ok(())
+    }
+}
+impl Read for DecryptedCompressedReader {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        if self.pos >= self.buf.len() {
+            // attempt refill
+            match self.refill() {
+                Ok(()) => {}
+                Err(Error::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(0),
+                Err(_e) => return Err(io::Error::other("decrypt")),
+            }
+            if self.buf.is_empty() {
+                return Ok(0);
+            }
+        }
+        let n = out.len().min(self.buf.len() - self.pos);
+        out[..n].copy_from_slice(&self.buf[self.pos..self.pos + n]);
+        self.pos += n;
+        Ok(n)
+    }
+}
+
 /// Blob store configuration
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -207,10 +355,10 @@ impl<K: KeyProvider> BlobStore<K> {
 
     /// Compute the SHA-256 digest for the given bytes (plaintext)
     pub fn digest_of(bytes: &[u8]) -> Digest {
-        use sha2::{Digest as _, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(bytes);
-        let out = hasher.finalize();
+        use sha2::Sha256;
+        let mut hasher = Sha256::default();
+        ShaUpdateTrait::update(&mut hasher, bytes);
+        let out = ShaFixedOutputTrait::finalize_fixed(hasher);
         let mut d = [0u8; 32];
         d.copy_from_slice(&out);
         Digest(d)
@@ -218,54 +366,138 @@ impl<K: KeyProvider> BlobStore<K> {
 
     /// Store bytes and return their content digest (CAS). Idempotent on same content.
     pub fn put(&self, bytes: &[u8]) -> Result<Digest, Error> {
-        // Compute plaintext digest (identity)
-        let digest = Self::digest_of(bytes);
+        // Delegate to streaming path over a slice reader
+        self.put_reader(Cursor::new(bytes))
+    }
+
+    /// Streaming put from any reader.
+    ///
+    /// Pipeline:
+    /// 1) Hash plaintext while zstd-compressing to a temporary file (no large buffers)
+    /// 2) Encrypt compressed stream in chunks with BS2 header and deterministic nonces
+    /// 3) Atomic rename to final path; record logical plaintext bytes in observer
+    ///
+    /// Determinism & bounds:
+    /// - Digest computed on plaintext; fixed zstd level
+    /// - Nonce prefix = SHA256(key||digest)[..12], counter_be32 per chunk
+    /// - Working set bounded by `CHUNK_SIZE`
+    pub fn put_reader<R: Read>(&self, mut reader: R) -> Result<Digest, Error> {
+        let _span = observer().span("blob.put");
+
+        // First pass: hash plaintext and zstd-compress to a temporary compressed file on disk.
+        // This avoids buffering the compressed payload in memory.
+        let mut hasher = sha2::Sha256::default();
+
+        // Prepare shard dir and final paths
+        // We don't know digest yet; write compressed to a temp path under root/tmp
+        let tmp_dir = self.cfg.root.join(".tmp");
+        fs::create_dir_all(&tmp_dir)?;
+        // Create a unique temp file without adding extra dependencies
+        let compressed_tmp = {
+            let mut i = 0u64;
+            loop {
+                let candidate = tmp_dir.join(format!("compressed-{}.tmp", i));
+                match fs::OpenOptions::new().write(true).create_new(true).open(&candidate) {
+                    Ok(f) => break (candidate, f),
+                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                        i = i.wrapping_add(1);
+                        continue;
+                    }
+                    Err(e) => return Err(Error::Io(e)),
+                }
+            }
+        };
+        let (compressed_tmp, comp_file) = compressed_tmp;
+        let mut encoder = zstd::stream::write::Encoder::new(comp_file, self.cfg.zstd_level)?;
+
+        let mut buf = vec![0u8; CHUNK_SIZE];
+        let mut total_plain: usize = 0;
+        loop {
+            let n = reader.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            total_plain = total_plain.saturating_add(n);
+            ShaUpdateTrait::update(&mut hasher, &buf[..n]);
+            encoder.write_all(&buf[..n])?;
+        }
+        let comp_file = encoder.finish()?; // get File back
+        comp_file.sync_all()?;
+
+        // Finalize digest and compute final path
+        let d_bytes = ShaFixedOutputTrait::finalize_fixed(hasher);
+        let mut d = [0u8; 32];
+        d.copy_from_slice(&d_bytes);
+        let digest = Digest(d);
         let hex = digest.to_hex();
         let final_path = self.path_for(&hex);
 
-        let _span = observer().span("blob.put");
+        // Idempotency: if exists, record logical bytes and return
+        if final_path.exists() {
+            observer().put_bytes(total_plain as u64);
+            return Ok(digest);
+        }
 
-        // Ensure shard directory exists
         if let Some(parent) = final_path.parent() {
             fs::create_dir_all(parent)?;
         }
 
-        // Idempotent: if already present, count and return digest
-        if final_path.exists() {
-            observer().put_bytes(bytes.len() as u64);
-            return Ok(digest);
-        }
-
-        // Compress deterministically
-        let compressed = zstd_encode_all(Cursor::new(bytes), self.cfg.zstd_level)?;
-
-        // Derive deterministic nonce from key + digest
-        use sha2::Digest as _;
+        // Encrypt the compressed temp stream into the final .incomplete file with header, then atomic rename.
         let key_bytes = self.key.key_bytes();
-        let mut h = sha2::Sha256::new();
-        h.update(key_bytes);
-        h.update(digest.0);
-        let n = h.finalize();
-        let mut nonce_bytes = [0u8; 12];
-        nonce_bytes.copy_from_slice(&n[..12]);
-
-        // Encrypt compressed payload
         #[allow(deprecated)]
         let key = aes_gcm::Key::<Aes256Gcm>::from_slice(&key_bytes);
         let cipher = Aes256Gcm::new(key);
-        #[allow(deprecated)]
-        let nonce = Nonce::from_slice(&nonce_bytes);
-        let ciphertext = cipher
-            .encrypt(nonce, compressed.as_ref())
-            .map_err(|_| Error::Crypto("encrypt".to_string()))?;
-
-        // Write atomically: tmp -> fsync -> rename -> fsync dir
+        let nonce_prefix = derive_nonce_prefix(key_bytes, &digest);
         let tmp_path = final_path.with_extension("incomplete");
         {
-            let mut f = fs::File::create(&tmp_path)?;
-            f.write_all(&ciphertext)?;
-            f.sync_all()?;
+            let mut out = fs::File::create(&tmp_path)?;
+            // Header: magic + version + chunk_size (u32 BE)
+            out.write_all(&FILE_MAGIC)?;
+            out.write_all(&[FILE_VERSION])?;
+            out.write_all(&(CHUNK_SIZE as u32).to_be_bytes())?;
+
+            // Chunked AEAD encrypt: for each plaintext chunk, derive nonce(prefix||counter_be)
+            let mut comp_in = fs::File::open(&compressed_tmp)?;
+            let mut ring = vec![0u8; CHUNK_SIZE];
+            let mut next = vec![0u8; CHUNK_SIZE];
+            let mut n = comp_in.read(&mut ring)?;
+            let mut counter: u32 = 0;
+            if n == 0 {
+                // Write one empty chunk to carry an auth tag
+                let nonce_bytes = nonce_prefix;
+                // last 4 bytes are counter
+                out.write_all(&(16u32).to_be_bytes())?; // AES-GCM tag size for empty plaintext
+                #[allow(deprecated)]
+                let nonce = Nonce::from_slice(&nonce_bytes);
+                let ct = cipher
+                    .encrypt(nonce, &[][..])
+                    .map_err(|_| Error::Crypto("encrypt(empty)".into()))?;
+                out.write_all(&ct)?;
+            } else {
+                loop {
+                    let mut nonce_bytes = [0u8; 12];
+                    nonce_bytes[..8].copy_from_slice(&nonce_prefix[..8]);
+                    nonce_bytes[8..].copy_from_slice(&counter.to_be_bytes());
+                    #[allow(deprecated)]
+                    let nonce = Nonce::from_slice(&nonce_bytes);
+                    let ct = cipher
+                        .encrypt(nonce, &ring[..n])
+                        .map_err(|_| Error::Crypto("encrypt".into()))?;
+                    out.write_all(&(ct.len() as u32).to_be_bytes())?;
+                    out.write_all(&ct)?;
+                    counter = counter.wrapping_add(1);
+
+                    let m = comp_in.read(&mut next)?;
+                    if m == 0 {
+                        break;
+                    }
+                    std::mem::swap(&mut ring, &mut next);
+                    n = m;
+                }
+            }
+            out.sync_all()?;
         }
+        // Atomic rename with AlreadyExists race handling
         match fs::rename(&tmp_path, &final_path) {
             Ok(_) => {}
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
@@ -283,18 +515,37 @@ impl<K: KeyProvider> BlobStore<K> {
             }
         }
 
-        observer().put_bytes(bytes.len() as u64);
+        // Remove temp compressed
+        let _ = fs::remove_file(&compressed_tmp);
 
+        // Record logical plaintext bytes written
+        observer().put_bytes(total_plain as u64);
         Ok(digest)
     }
 
     /// Retrieve plaintext bytes by digest
     pub fn get(&self, digest: &Digest) -> Result<Vec<u8>, Error> {
+        let mut out = Vec::new();
+        let n = self.get_to_writer(digest, &mut out)?;
+        debug_assert_eq!(n, out.len());
+        Ok(out)
+    }
+
+    /// Streaming read: decrypt + zstd-decompress into `writer`.
+    ///
+    /// Behavior:
+    /// - If BS2 header present: stream `[len][ct]` chunks → decrypt with per-chunk nonce →
+    ///   zstd `read::Decoder` → hashing writer; verify computed digest == expected
+    /// - Else (legacy): single-shot decrypt (nonce = prefix) of full compressed stream and
+    ///   stream-decompress via `read::Decoder`
+    /// - Enforces header-declared `chunk_size` and rejects any chunk with length > chunk_size + 16 (AEAD tag)
+    /// - Returns total plaintext bytes written; increments observer counters.
+    pub fn get_to_writer<W: Write>(&self, digest: &Digest, mut writer: W) -> Result<usize, Error> {
         let _span = observer().span("blob.get");
 
         let path = self.path_for(&digest.to_hex());
-        let enc = match fs::read(&path) {
-            Ok(b) => b,
+        let mut f = match fs::File::open(&path) {
+            Ok(f) => f,
             Err(e) => {
                 return if e.kind() == io::ErrorKind::NotFound {
                     Err(Error::NotFound)
@@ -304,32 +555,76 @@ impl<K: KeyProvider> BlobStore<K> {
             }
         };
 
-        // Re-derive deterministic nonce from key + digest
-        use sha2::Digest as _;
-        let key_bytes = self.key.key_bytes();
-        let mut h = sha2::Sha256::new();
-        h.update(key_bytes);
-        h.update(digest.0);
-        let n = h.finalize();
-        let mut nonce_bytes = [0u8; 12];
-        nonce_bytes.copy_from_slice(&n[..12]);
+        // Peek header
+        let mut header = [0u8; 9];
+        let read = f.read(&mut header)?;
+        if read < header.len() || header[..4] != FILE_MAGIC {
+            // Legacy format: read full file into memory and fall back to single-shot decrypt+decompress
+            let mut enc = Vec::with_capacity(fs::metadata(&path)?.len() as usize);
+            if read > 0 {
+                enc.extend_from_slice(&header[..read]);
+            }
+            f.read_to_end(&mut enc)?;
 
+            let key_bytes = self.key.key_bytes();
+            #[allow(deprecated)]
+            let key = aes_gcm::Key::<Aes256Gcm>::from_slice(&key_bytes);
+            let cipher = Aes256Gcm::new(key);
+            let nonce_prefix = derive_nonce_prefix(key_bytes, digest);
+            #[allow(deprecated)]
+            let nonce = Nonce::from_slice(&nonce_prefix);
+            let compressed = cipher
+                .decrypt(nonce, enc.as_ref())
+                .map_err(|_| Error::Crypto("decrypt(legacy)".into()))?;
+
+            // Decompress and stream to hashing writer via read::Decoder
+            let mut dec = zstd::stream::read::Decoder::new(Cursor::new(compressed))
+                .map_err(|_| Error::Integrity)?;
+            let mut hw = HashingWriter::new(&mut writer);
+            let count = io::copy(&mut dec, &mut hw).map_err(|_| Error::Integrity)? as usize;
+            let (_w, d_bytes, _c) = hw.finalize();
+            if Digest(d_bytes) != *digest {
+                return Err(Error::Integrity);
+            }
+            observer().get_bytes(count as u64);
+            return Ok(count);
+        }
+
+        let version = header[4];
+        if version != FILE_VERSION {
+            return Err(Error::Integrity);
+        }
+        let mut sz = [0u8; 4];
+        sz.copy_from_slice(&header[5..9]);
+        let hdr_chunk_size = u32::from_be_bytes(sz) as usize;
+        if hdr_chunk_size == 0 || hdr_chunk_size > MAX_CHUNK_SIZE {
+            return Err(Error::Integrity);
+        }
+
+        let key_bytes = self.key.key_bytes();
         #[allow(deprecated)]
         let key = aes_gcm::Key::<Aes256Gcm>::from_slice(&key_bytes);
         let cipher = Aes256Gcm::new(key);
-        #[allow(deprecated)]
-        let nonce = Nonce::from_slice(&nonce_bytes);
-
-        let compressed = cipher.decrypt(nonce, enc.as_ref()).map_err(|_| Error::Integrity)?;
-
-        let plain = zstd_decode_all(Cursor::new(compressed)).map_err(|_| Error::Integrity)?;
-
-        if Self::digest_of(&plain) != *digest {
+        let nonce_prefix = derive_nonce_prefix(key_bytes, digest);
+        // Build decrypted-compressed reader and pipe through zstd read::Decoder into hashing writer
+        let reader = DecryptedCompressedReader {
+            file: f,
+            cipher,
+            nonce_prefix,
+            counter: 0,
+            buf: Vec::new(),
+            pos: 0,
+            chunk_size: hdr_chunk_size,
+        };
+        let mut dec = zstd::stream::read::Decoder::new(reader).map_err(|_| Error::Integrity)?;
+        let mut hw = HashingWriter::new(&mut writer);
+        let count = io::copy(&mut dec, &mut hw).map_err(|_| Error::Integrity)? as usize;
+        let (_w, d_bytes, _c) = hw.finalize();
+        if Digest(d_bytes) != *digest {
             return Err(Error::Integrity);
         }
-        observer().get_bytes(plain.len() as u64);
-
-        Ok(plain)
+        observer().get_bytes(count as u64);
+        Ok(count)
     }
 
     /// Return true if a blob with this digest is present

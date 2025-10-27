@@ -17,7 +17,7 @@ thiserror = "1"
 # Optional OpenTelemetry integration (enable via feature: otel)
 opentelemetry = { version = "0.22", optional = true }
 opentelemetry_sdk = { version = "0.22", optional = true, features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.15", optional = true, features = ["http-proto", "metrics"] }
+opentelemetry-otlp = { version = "0.15", optional = true, features = ["http-proto", "metrics", "reqwest-client"] }
 once_cell = { version = "1", optional = true }
 blob_store = { path = "../blob_store", optional = true }
 
@@ -30,6 +30,7 @@ otel = [
   "once_cell",
   "blob_store",
 ]
+opentelemetry-otlp = ["dep:opentelemetry-otlp"]
 
 
 [dev-dependencies]

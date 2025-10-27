@@ -1,4 +1,64 @@
 - Date (UTC): 2025-10-27 07:02
+- Date (UTC): 2025-10-27 08:34
+- Date (UTC): 2025-10-27 09:28
+- Area: Storage|Security|Tests|Docs
+- Context/Goal: T-6a-E4-BS-08 — BS2 read bounds & robustness (enforce header chunk_size; reject oversize chunk lengths; avoid unbounded allocations).
+- Actions:
+  - Added constants AEAD_TAG_SIZE=16 and MAX_CHUNK_SIZE=4MiB; validated header chunk_size (non-zero, <= MAX_CHUNK_SIZE).
+  - Plumbed chunk_size into DecryptedCompressedReader and reject clen==0 or clen>chunk_size+tag before allocating/reading.
+  - New tests: bs2_robustness.rs (header zero size; chunk len > bound). Added ignored manual GET memory harness.
+  - README: documented read-path enforcement.
+  - Telemetry: enabled opentelemetry-otlp reqwest-client feature so OTLP example runs by default.
+- Results:
+  - cargo fmt/clippy/tests: PASS. Blob store tests incl. new robustness tests pass; memory harness is ignored by default.
+  - Example: cargo run --example blob_otlp --features otel → runs; prints endpoint note.
+- Diagnostics:
+  - Prior read path ignored header chunk_size and could allocate `clen` bytes unbounded by header; fixed by pre-read checks and MAX_CHUNK_SIZE cap.
+- Decision(s):
+  - Keep MAX_CHUNK_SIZE at 4MiB; can be revisited with benchmarks. Maintain fail-closed on violations.
+- Follow-ups:
+  - Consider adding histogram for op byte sizes (deferred).
+
+
+- Date (UTC): 2025-10-27 09:11
+- Area: Storage|Docs|Observability
+- Context/Goal: T-6a-E4-BS-07 REFACTOR — document BS2 streaming format, memory bounds, determinism; README and rustdoc polish.
+- Actions:
+  - Expanded rustdoc in crates/blob_store/src/lib.rs (BS2 header/chunks, nonce scheme, legacy fallback, memory bounds). Added docs to HashingWriter/DecryptedCompressedReader and streaming APIs.
+  - Added crates/blob_store/README.md with BS2 format, usage examples (put_reader/get_to_writer), perf/memory notes.
+  - Ran fmt/clippy/tests; executed OTLP example.
+- Results:
+  - cargo fmt/clippy/tests: PASS (workspace, all-features). Doc-tests: PASS.
+  - Example run: started but OTLP exporter reports missing HTTP client feature.
+- Diagnostics:
+  - opentelemetry-otlp requires a client feature (e.g., reqwest-client) in addition to http-proto; current features omit it.
+- Decision(s):
+  - Keep example as-is; request approval to add `reqwest-client` feature in telemetry crate to make example fully functional by default.
+- Follow-ups:
+  - Post review on PR #74, add client feature via `cargo add opentelemetry-otlp -F reqwest-client` (with approval) or as a small follow-up PR.
+
+
+- Area: Storage|Performance|Observability
+- Context/Goal: T-6a-E4-BS-07 GREEN — implement bounded-memory streaming put/get with OTel counters while preserving determinism and back-compat.
+- Actions:
+  - Implemented streaming pipeline in blob_store: put_reader(get digest while compressing to temp) → encrypt chunked with BS2 header → atomic rename; get_to_writer streams decrypt+zstd via read::Decoder.
+  - Added DecryptedCompressedReader to incrementally decrypt [len_be][ct] chunks; HashingWriter computes plaintext digest while writing.
+  - Preserved legacy read path for pre-BS2 blobs (magic/version probe); fail-closed on integrity/crypto/IO.
+  - Wired observer().put_bytes(total_plain) and observer().get_bytes(count) to satisfy telemetry integration tests.
+  - Validated locally: cargo fmt/clippy/tests (crate + workspace) all PASS.
+- Results:
+  - blob_store tests: PASS (including new streaming_red.rs); telemetry integration: PASS; workspace: PASS.
+  - Memory bounded by CHUNK_SIZE (64 KiB) + small rings; no large buffers in control path.
+- Diagnostics:
+  - zstd write::Decoder has no finish(); switched to read::Decoder + io::copy into HashingWriter.
+  - sha2 0.10 API requires explicit trait method calls; avoided name collision with local Digest type.
+- Decision(s):
+  - Keep deterministic nonce scheme and BS2 header format; maintain legacy fallback for read.
+  - Count logical plaintext bytes on put even for idempotent writes to keep metrics monotonic.
+- Follow-ups:
+  - REFACTOR: polish docs and README with BS2 format and memory bounds; optional histogram metrics; open PR and run CI.
+
+
 - Area: Observability|Storage|CI
 - Context/Goal: Verify, convert PR #72 to Ready, merge (squash), and validate on main.
 - Actions:
