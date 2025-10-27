@@ -7,6 +7,9 @@ use std::sync::Arc;
 use thiserror::Error;
 use tracing_subscriber::{fmt, layer::SubscriberExt, EnvFilter, Registry};
 
+#[cfg(feature = "otel")]
+pub mod blob_observer;
+
 #[derive(Debug, Error)]
 pub enum TelemetryError {
     #[error("otel setup failed: {0}")]

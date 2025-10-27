@@ -1,3 +1,28 @@
+- Date (UTC): 2025-10-27 02:47
+- Area: Runtime|Storage|Observability
+- Context/Goal: Implement follow-ups from staff review for Blob Store MVP (T-6a-E4-BS-06): edge-case tests, observability hooks, Windows rename handling; open PR.
+- Actions:
+  - Created branch feat/blob-store-improvements from synced main
+  - Added tests: empty blob round-trip; explicit NotFound
+  - Added pluggable observability hooks (put/get bytes; cleanup count) + optional spans; default no-op
+  - Handled Windows rename race by treating AlreadyExists as success if final exists
+  - Updated docs: duplicate-revealing deterministic nonces; key rotation considerations
+  - Ran validations: cargo fmt, clippy (deny warnings), crate+workspace tests
+  - Opened draft PR #71; created Issue #70 to track follow-ups
+- Results:
+  - cargo clippy -p blob_store -- -D warnings: PASS
+  - cargo test -p blob_store -- --nocapture: PASS (8 tests)
+  - cargo test --workspace -- --nocapture: PASS
+  - Pushed branch and opened draft PR #71 referencing Issue #70
+- Diagnostics:
+  - No functional changes to on-disk format; observability is optional and disabled by default (no-op)
+  - Tests confirm empty-blob identity/determinism and NotFound behavior
+- Decision(s): Proceed with PR #71 as Draft; keep OTel wiring in a subsequent change to minimize risk
+- Follow-ups:
+  - Wire hooks to telemetry crate (`otel` feature): counters blob.put.bytes, blob.get.bytes, blob.cleanup.count; add spans
+  - Property tests across sizes; bound decompression allocations; streaming IO for large blobs
+
+
 - Date (UTC): 2025-10-27 02:18
 - Area: Runtime|Storage|Security|Docs
 - Context/Goal: Complete T-6a-E4-BS-06 (Blob Store MVP) by squash-merging PR #69, closing Issue #6, cleaning up branches, syncing main, and validating post-merge.
