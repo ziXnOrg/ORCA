@@ -13,10 +13,10 @@ fn temp_dir_path() -> PathBuf {
     p
 }
 
-#[test]
-fn registers_observer_and_counts_metrics() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test(flavor = "current_thread")]
+async fn registers_observer_and_counts_metrics() -> Result<(), Box<dyn std::error::Error>> {
     // Register the OTel-backed observer
-    let _ = set_observer(blob_global());
+    set_observer(blob_global());
 
     // Create a store and exercise put/get/cleanup
     let dir = temp_dir_path();

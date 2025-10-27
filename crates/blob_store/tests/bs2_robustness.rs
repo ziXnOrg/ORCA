@@ -56,7 +56,7 @@ fn rejects_chunk_len_over_bound() {
     file.push(1u8);
     file.extend_from_slice(&chunk_size.to_be_bytes());
     file.extend_from_slice(&(clen as u32).to_be_bytes());
-    file.extend(std::iter::repeat(0u8).take(clen)); // bogus ciphertext
+    file.resize(file.len() + clen, 0u8); // bogus ciphertext
     write_at_path(&path, &file);
 
     let mut sink = std::io::sink();

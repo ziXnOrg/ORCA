@@ -1,5 +1,25 @@
 - Date (UTC): 2025-10-27 07:02
 - Date (UTC): 2025-10-27 08:34
+- Date (UTC): 2025-10-27 09:28
+- Area: Storage|Security|Tests|Docs
+- Context/Goal: T-6a-E4-BS-08 — BS2 read bounds & robustness (enforce header chunk_size; reject oversize chunk lengths; avoid unbounded allocations).
+- Actions:
+  - Added constants AEAD_TAG_SIZE=16 and MAX_CHUNK_SIZE=4MiB; validated header chunk_size (non-zero, <= MAX_CHUNK_SIZE).
+  - Plumbed chunk_size into DecryptedCompressedReader and reject clen==0 or clen>chunk_size+tag before allocating/reading.
+  - New tests: bs2_robustness.rs (header zero size; chunk len > bound). Added ignored manual GET memory harness.
+  - README: documented read-path enforcement.
+  - Telemetry: enabled opentelemetry-otlp reqwest-client feature so OTLP example runs by default.
+- Results:
+  - cargo fmt/clippy/tests: PASS. Blob store tests incl. new robustness tests pass; memory harness is ignored by default.
+  - Example: cargo run --example blob_otlp --features otel → runs; prints endpoint note.
+- Diagnostics:
+  - Prior read path ignored header chunk_size and could allocate `clen` bytes unbounded by header; fixed by pre-read checks and MAX_CHUNK_SIZE cap.
+- Decision(s):
+  - Keep MAX_CHUNK_SIZE at 4MiB; can be revisited with benchmarks. Maintain fail-closed on violations.
+- Follow-ups:
+  - Consider adding histogram for op byte sizes (deferred).
+
+
 - Date (UTC): 2025-10-27 09:11
 - Area: Storage|Docs|Observability
 - Context/Goal: T-6a-E4-BS-07 REFACTOR — document BS2 streaming format, memory bounds, determinism; README and rustdoc polish.

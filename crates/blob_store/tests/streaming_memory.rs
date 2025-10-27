@@ -22,8 +22,8 @@ impl Read for DeterministicReader {
             return Ok(0);
         }
         let n = buf.len().min(self.remaining);
-        for i in 0..n {
-            buf[i] = (self.idx as u8).wrapping_mul(37).wrapping_add(11);
+        for b in buf.iter_mut().take(n) {
+            *b = (self.idx as u8).wrapping_mul(37).wrapping_add(11);
             self.idx += 1;
         }
         self.remaining -= n;

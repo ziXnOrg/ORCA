@@ -2,7 +2,7 @@
 #![cfg(test)]
 
 use blob_store::{deterministic_bytes, BlobStore, Config, DevKeyProvider};
-use std::io::{Cursor, Write};
+use std::io::Cursor;
 use std::path::PathBuf;
 
 fn new_store() -> (tempfile::TempDir, BlobStore<DevKeyProvider>) {

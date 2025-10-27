@@ -28,7 +28,8 @@ proptest! {
         Just(1024 * 1024usize)
     ]) {
         // Register the OTel-backed observer (idempotent)
-        let _ = set_observer(blob_global());
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async { set_observer(blob_global()); });
 
         let before = snapshot_counters();
 
