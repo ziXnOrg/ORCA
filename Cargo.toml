@@ -1,13 +1,15 @@
 [workspace]
 resolver = "2"
 members = [
-	"crates/orca-core",
-	"crates/orchestrator",
-	"crates/event-log",
-	"crates/budget",
-	"crates/policy",
-	"crates/telemetry",
-	"crates/replay-cli", "crates/plugin_host",
+    "crates/orca-core",
+    "crates/orchestrator",
+    "crates/event-log",
+    "crates/budget",
+    "crates/policy",
+    "crates/telemetry",
+    "crates/replay-cli",
+    "crates/plugin_host",
+    "crates/blob_store",
 ]
 
 [workspace.package]

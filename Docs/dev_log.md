@@ -1,3 +1,25 @@
+- Date (UTC): 2025-10-27 01:00
+- Area: Runtime
+- Context/Goal: Kick off T-6a-E4-BS-06 — Blob Store MVP (CAS + zstd + encryption-at-rest) with TDD (RED phase) to establish deterministic, fail-closed artifact storage foundation.
+- Actions:
+  - Created feature branch feat/blob-store-mvp from main
+  - Added new crate crates/blob_store and registered it in workspace Cargo.toml
+  - Drafted RED tests covering: CAS digest identity, idempotent put, round-trip integrity, wrong-key failure, tamper detection, partial-write detection, deterministic behavior across runs
+  - Ran targeted tests: cargo test -p blob_store -- --nocapture (expected failures)
+- Results:
+  - 6 failing tests as expected (RED); compile warnings noted (unused imports in tests, key field unused pending GREEN)
+  - Validated acceptance coverage and deterministic test data generation
+- Diagnostics:
+  - Identity digest computed on plaintext; encryption-at-rest will derive deterministic nonce from digest to preserve determinism while ensuring unique nonces per key
+  - Atomic write plan: temp file + fsync + atomic rename; directory fsync at sharded path
+- Decision(s):
+  - Use AES-256-GCM with 32-byte key via KeyProvider trait; fixed zstd level (3) for deterministic compression at rest
+  - Sharded path layout sha256/aa/bb/<digest>; read-only rollback mode planned
+- Follow-ups:
+  - Implement GREEN phase: streaming write path (compress→encrypt), read/decrypt/verify, idempotent put, partial-write cleanup, error taxonomy
+  - Add low-cardinality metrics (blob.put.bytes, blob.get.bytes) and structured logs in REFACTOR
+
+
 - Date (UTC): 2025-10-27 00:22
 - Area: Policy|CI|Docs|Git
 - Context/Goal: Finalize T-6a-E2-POL-05 by merging PR #67 to main, closing Issue #5, cleaning up branches, syncing main, and validating post-merge.
