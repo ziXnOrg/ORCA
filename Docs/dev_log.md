@@ -1,3 +1,27 @@
+- Date (UTC): 2025-10-27 02:18
+- Area: Runtime|Storage|Security|Docs
+- Context/Goal: Complete T-6a-E4-BS-06 (Blob Store MVP) by squash-merging PR #69, closing Issue #6, cleaning up branches, syncing main, and validating post-merge.
+- Actions:
+  - Converted PR #69 Ready for Review; updated PR body with RED→GREEN→REFACTOR completion and validation logs
+  - Squash-merged PR #69 → main
+  - Closed Issue #6 with link to merged PR
+  - Deleted feature branch `feat/blob-store-mvp` (remote+local); synced local `main` (fast-forward)
+  - Ran `cargo test --workspace -- --nocapture` on main
+- Results:
+  - Merge commit: f673ea4aa33fcfc7395922acddd887265fd48e3e (main)
+  - Workspace tests: PASS; doctests: PASS
+  - CI coverage job succeeded (threshold gates passed)
+- Diagnostics:
+  - Deterministic nonce = SHA-256(key||digest)[..12] enables dedup determinism; integrity verified via AEAD tag + plaintext digest check
+  - Note: Windows rename semantics may require handling AlreadyExists on concurrent put() of same digest
+- Decision(s): Accept Blob Store MVP for main; proceed to follow-ups focused on observability and robustness
+- Follow-ups:
+  - Add low-cardinality metrics/logs (blob.put.bytes, blob.get.bytes, cleanup.count)
+  - Property tests (idempotence/determinism across sizes; empty blob; NotFound path)
+  - Streaming IO for large blobs; bound decompression allocations
+  - Handle cross-platform rename race (treat EEXIST as success); consider zeroize/KMS-backed KeyProvider
+
+
 - Date (UTC): 2025-10-27 01:00
 - Date (UTC): 2025-10-27 01:48
 - Area: Runtime|Storage|Docs
