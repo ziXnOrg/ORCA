@@ -1,20 +1,45 @@
-//! Blob Store MVP (CAS + zstd + encryption-at-rest)
+//! Blob Store (CAS + zstd + encryption-at-rest)
 //!
-//! Safety-critical defaults:
-//! - Deterministic content identity (SHA-256 of plaintext)
-//! - Fail-closed on key/config/IO errors
-//! - Atomic writes with temp file + rename (to be implemented)
-//! - Encryption-at-rest (AES-GCM) with deterministic nonce derived from digest (to be implemented)
-//! - Compression at rest via zstd with fixed level (to be implemented)
+//! Overview
+//! - Content-addressable identity: SHA-256 computed over plaintext bytes.
+//! - Determinism: fixed zstd level; AES-256-GCM with nonce = SHA-256(key || digest)[..12].
+//! - Atomicity & durability: write to a temporary file, `fsync`, atomic rename, then directory `fsync`.
+//! - Fail-closed: any I/O, crypto, or integrity error aborts the operation.
+//!
+//! Security Model
+//! - AES-256-GCM provides confidentiality and integrity at rest.
+//! - Nonce derivation is deterministic per (key, digest) to enable idempotent storage and stable ciphertexts.
+//!   This is an intentional trade-off to support deduplication; integrity is enforced via AEAD tags and
+//!   digest verification on read.
+//! - Errors never include secrets; integrity failures do not leak key material.
+//!
+//! Determinism Guarantees
+//! - `Digest` identity is computed on plaintext only.
+//! - Compression uses a fixed zstd level (default 3) for stable output.
+//! - Given the same key and bytes, `put` is idempotent and `get` returns identical plaintext.
+//!
+//! Usage example
+//! ```rust
+//! use blob_store::{BlobStore, Config, DevKeyProvider};
+//! let dir = tempfile::tempdir().unwrap();
+//! let cfg = Config::with_root(dir.path().to_path_buf());
+//! let key = DevKeyProvider::new([0x11; 32]);
+//! let store = BlobStore::new(cfg, key).unwrap();
+//! let data = b"hello".to_vec();
+//! let digest = store.put(&data).unwrap();
+//! assert!(store.exists(&digest));
+//! let got = store.get(&digest).unwrap();
+//! assert_eq!(got, data);
+//! ```
 
 #![warn(missing_docs)]
 
+use std::io::Cursor;
 use std::{
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
 };
-use std::io::Cursor;
 
 use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
 use zstd::stream::{decode_all as zstd_decode_all, encode_all as zstd_encode_all};
@@ -212,9 +237,7 @@ impl<K: KeyProvider> BlobStore<K> {
         #[allow(deprecated)]
         let nonce = Nonce::from_slice(&nonce_bytes);
 
-        let compressed = cipher
-            .decrypt(nonce, enc.as_ref())
-            .map_err(|_| Error::Integrity)?;
+        let compressed = cipher.decrypt(nonce, enc.as_ref()).map_err(|_| Error::Integrity)?;
 
         let plain = zstd_decode_all(Cursor::new(compressed)).map_err(|_| Error::Integrity)?;
 

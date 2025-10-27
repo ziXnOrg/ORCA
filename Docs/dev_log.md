@@ -1,4 +1,21 @@
 - Date (UTC): 2025-10-27 01:00
+- Date (UTC): 2025-10-27 01:48
+- Area: Runtime|Storage|Docs
+- Context/Goal: REFACTOR phase for T-6a-E4-BS-06 — add comprehensive rustdoc, clean warnings, and validate workspace gates.
+- Actions:
+  - Wrote module-level docs (security model, determinism, atomicity), per-item rustdoc, and usage example doctest
+  - Removed unused imports in tests; enabled `#![warn(missing_docs)]`
+  - Ran `cargo fmt`, `cargo clippy -p blob_store -D warnings`, `cargo test -p blob_store`, and `cargo test --workspace`
+- Results:
+  - All crate and workspace tests PASS; doctest PASS; clippy PASS; fmt clean
+- Diagnostics:
+  - Current design intentionally uses deterministic nonces (SHA256(key||digest)[..12]) to meet dedup/determinism goals; integrity verified with AEAD tag and digest
+- Decision(s):
+  - Keep WARN on missing_docs (public items covered); consider DENY in follow-up once broader workspace is aligned
+- Follow-ups:
+  - Add low-cardinality metrics/logs in subsequent change; consider property tests for larger ranges and streaming IO
+
+
 - Date (UTC): 2025-10-27 01:29
 - Area: Runtime|Storage|Crypto
 - Context/Goal: GREEN phase for T-6a-E4-BS-06 — implement CAS + zstd + AES-256-GCM to satisfy RED tests deterministically and fail-closed.

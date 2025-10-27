@@ -1,6 +1,5 @@
-use blob_store::{deterministic_bytes, BlobStore, Config, DevKeyProvider, Digest, KeyProvider};
+use blob_store::{deterministic_bytes, BlobStore, Config, DevKeyProvider};
 use std::fs;
-use std::path::PathBuf;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
