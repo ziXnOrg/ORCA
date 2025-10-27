@@ -8,7 +8,8 @@ use std::path::PathBuf;
 fn new_store() -> (tempfile::TempDir, BlobStore<DevKeyProvider>) {
     let dir = tempfile::tempdir().unwrap();
     let cfg = Config { root: PathBuf::from(dir.path()), zstd_level: 3 };
-    let store: BlobStore<DevKeyProvider> = BlobStore::new(cfg, DevKeyProvider::new([7u8; 32])).unwrap();
+    let store: BlobStore<DevKeyProvider> =
+        BlobStore::new(cfg, DevKeyProvider::new([7u8; 32])).unwrap();
     (dir, store)
 }
 
@@ -18,9 +19,7 @@ fn digest_equality_streaming_vs_buffer_small_sizes() {
     for &len in &[0usize, 1, 1024, 4096] {
         let data = deterministic_bytes(len);
         let d_buf = store.put(&data).expect("put buffer");
-        let d_stream = store
-            .put_reader(Cursor::new(data.clone()))
-            .expect("put_reader");
+        let d_stream = store.put_reader(Cursor::new(data.clone())).expect("put_reader");
         assert_eq!(d_buf.0, d_stream.0, "digest mismatch at len={}", len);
         let got = store.get(&d_stream).expect("get after put");
         assert_eq!(got, data);
@@ -52,4 +51,3 @@ fn cleanup_incomplete_still_works() {
     assert!(!tmp.exists());
     drop(dir);
 }
-

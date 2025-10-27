@@ -12,11 +12,15 @@ struct DeterministicReader {
     idx: usize,
 }
 impl DeterministicReader {
-    fn new(len: usize) -> Self { Self { remaining: len, idx: 0 } }
+    fn new(len: usize) -> Self {
+        Self { remaining: len, idx: 0 }
+    }
 }
 impl Read for DeterministicReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if self.remaining == 0 { return Ok(0); }
+        if self.remaining == 0 {
+            return Ok(0);
+        }
         let n = buf.len().min(self.remaining);
         for i in 0..n {
             buf[i] = (self.idx as u8).wrapping_mul(37).wrapping_add(11);
@@ -35,7 +39,9 @@ fn rss_kb() -> Option<usize> {
             .args(["-o", "rss=", "-p", &pid.to_string()])
             .output()
             .ok()?;
-        if !out.status.success() { return None; }
+        if !out.status.success() {
+            return None;
+        }
         let s = String::from_utf8_lossy(&out.stdout);
         let kb = s.trim().parse::<usize>().ok()?;
         return Some(kb);
@@ -51,12 +57,17 @@ fn streaming_put_memory_bound_manual() {
         eprintln!("skipped; set LARGE_BLOB_TEST=1 to run");
         return;
     }
-    let target_bytes = std::env::var("LARGE_BLOB_BYTES").ok().and_then(|v| v.parse().ok()).unwrap_or(1_000_000_000);
-    let rss_limit_kb: usize = std::env::var("RSS_LIMIT_KB").ok().and_then(|v| v.parse().ok()).unwrap_or(32 * 1024);
+    let target_bytes = std::env::var("LARGE_BLOB_BYTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1_000_000_000);
+    let rss_limit_kb: usize =
+        std::env::var("RSS_LIMIT_KB").ok().and_then(|v| v.parse().ok()).unwrap_or(32 * 1024);
 
     let dir = tempfile::tempdir().unwrap();
     let cfg = Config { root: PathBuf::from(dir.path()), zstd_level: 3 };
-    let store: BlobStore<DevKeyProvider> = BlobStore::new(cfg, DevKeyProvider::new([5u8; 32])).unwrap();
+    let store: BlobStore<DevKeyProvider> =
+        BlobStore::new(cfg, DevKeyProvider::new([5u8; 32])).unwrap();
 
     let before = rss_kb();
     let digest = store.put_reader(DeterministicReader::new(target_bytes)).expect("put_reader");
@@ -72,9 +83,16 @@ fn streaming_put_memory_bound_manual() {
 
     // Optional: validate read path without allocating full buffer by discarding bytes
     struct SinkWriter(usize);
-    impl std::io::Write for SinkWriter { fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> { self.0 += buf.len(); Ok(buf.len()) } fn flush(&mut self) -> std::io::Result<()> { Ok(()) } }
+    impl std::io::Write for SinkWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0 += buf.len();
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
     let mut sink = SinkWriter(0);
     let n = store.get_to_writer(&digest, &mut sink).expect("get_to_writer");
     assert_eq!(n, sink.0);
 }
-
