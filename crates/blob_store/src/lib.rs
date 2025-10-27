@@ -39,6 +39,7 @@
 
 #![warn(missing_docs)]
 
+use std::any::Any;
 use std::io::Cursor;
 use std::{
     fs,
@@ -120,14 +121,30 @@ pub trait BlobStoreObserver: Send + Sync {
     fn cleanup_count(&self, _n: u64) {}
     /// Start an optional span; dropping ends it.
     fn span(&self, _name: &'static str) -> BlobSpan {
-        BlobSpan
+        BlobSpan::noop()
     }
 }
 
-/// Guard object for optional spans.
-pub struct BlobSpan;
+/// Guard object for optional spans. Holds a type-erased guard that exits on drop.
+pub struct BlobSpan {
+    _guard: Option<Box<dyn Any + 'static>>,
+}
+
+impl BlobSpan {
+    /// Create a no-op span guard.
+    pub fn noop() -> Self {
+        Self { _guard: None }
+    }
+    /// Create a span guard from an arbitrary guard object; dropping this will drop the guard.
+    pub fn from_guard<G: 'static>(guard: G) -> Self {
+        Self { _guard: Some(Box::new(guard)) }
+    }
+}
+
 impl Drop for BlobSpan {
-    fn drop(&mut self) {}
+    fn drop(&mut self) {
+        // Dropping `_guard` exits the underlying span if present.
+    }
 }
 
 struct NoopObserver;

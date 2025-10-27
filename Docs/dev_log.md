@@ -1,3 +1,95 @@
+- Date (UTC): 2025-10-27 05:10
+- Area: Observability|Storage
+- Context/Goal: Add minimal OTLP HTTP exporter init helper and an end-to-end example; move PR #72 toward review readiness.
+- Actions:
+  - telemetry[otel]: added `init_otlp_from_env()` (idempotent) initializing tracer+meter providers from env (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`) with HTTP exporter.
+  - Added example binary `crates/telemetry/examples/blob_otlp.rs` demonstrating init helper + observer registration + blob ops (put/get/cleanup) and brief flush wait.
+  - Updated `crates/telemetry/README.md` with example run instructions and snippet.
+  - Ran validation: cargo fmt --all; cargo clippy --workspace --all-features -D warnings; cargo test --workspace --all-features -- --nocapture (PASS).
+  - Updated PR #72 body to document the new helper and example.
+  - Attempted to mark PR #72 Ready for Review via API; endpoint returned 404 (tool limitation). PR remains Draft; manual click needed.
+- Results:
+  - All validations PASS; example builds under `--features otel`.
+  - PR #72 description updated; status still Draft pending manual Ready-for-Review conversion.
+- Diagnostics:
+  - opentelemetry-otlp requires `WithExportConfig` trait in scope for `.with_endpoint(..)`; imported explicitly.
+  - Example uses tokio (dev-dep) to satisfy `install_batch(runtime::Tokio)` exporters; short sleep allows flush.
+- Decision(s): Provide minimal helper rather than subscriber layer hookup; keep feature-gated and fail-closed by default.
+- Follow-ups:
+  - Convert PR #72 to Ready for Review in GitHub UI.
+  - Optional: add force-flush/shutdown hooks for metrics/traces where feasible.
+
+
+- Date (UTC): 2025-10-27 03:37
+- Area: Observability|Storage
+- Context/Goal: Enhance Blob Store OTel integration with real RAII spans, an OTLP wiring example, and property tests to validate metric correctness across sizes.
+- Actions:
+  - Upgraded blob_store::BlobSpan to hold type-erased guard for RAII span exit without adding tracing dep to blob_store.
+  - telemetry[otel]: enter real tracing spans in blob_observer::span() and wrap guard in BlobSpan.
+  - Added low-cardinality metric attributes: op={put|get|cleanup}.
+  - Added README with OTLP exporter example and observer registration snippet.
+  - Added property tests (proptest) for metric deltas across sizes; kept counters low-cardinality.
+  - Ran validation: fmt, clippy --all-features -D warnings, and tests workspace-wide.
+- Results:
+  - All checks passed locally. Property tests exercised sizes: 0, 1, 1KB, <=4KB, 1MB.
+  - PR #72 updated with the new enhancements and validation evidence.
+- Diagnostics:
+  - tracing::EnteredSpan is !Send; adjusted BlobSpan guard erasure to not require Send.
+  - Removed unused import; ensured metrics maintain low cardinality.
+- Decision(s): Keep RAII via type-erased guard; spans are best-effort under `otel` feature only; retain fail-closed defaults when observer not set.
+- Follow-ups:
+  - Optional: expose span attributes (digest prefix length-limited) if needed; evaluate impact on cardinality.
+  - Optional: benchmark blob IO overhead with metrics enabled vs disabled (<5% target as per perf budgets).
+
+
+- Date (UTC): 2025-10-27 02:47
+- Date (UTC): 2025-10-27 03:15
+- Area: Observability|Storage
+- Context/Goal: Implement OTel-backed observer for Blob Store hooks and validate end-to-end; open Draft PR.
+- Actions:
+  - Synced main; created branch feat/blob-store-otel-integration
+  - Merged feat/blob-store-improvements into branch to access BlobStoreObserver trait (PR #71)
+  - Added telemetry::blob_observer (feature `otel`): counters blob.put.bytes, blob.get.bytes, blob.cleanup.count; best-effort spans
+  - Added integration test (feature `otel`) registering observer and exercising put/get/cleanup
+  - Ran validations: cargo fmt; cargo clippy --workspace --all-features -D warnings; cargo test (crate + workspace, all-features)
+  - Opened Draft PR #72
+- Results:
+  - cargo clippy --workspace --all-features -- -D warnings: PASS
+  - cargo test -p telemetry --all-features -- --nocapture: PASS (1 test)
+  - cargo test -p blob_store --all-features -- --nocapture: PASS (8 tests)
+  - cargo test --workspace --all-features -- --nocapture: PASS
+- Diagnostics:
+  - Initial unresolved imports due to trait not on main; resolved by merging improvements branch
+  - Metrics are low-cardinality; instruments initialized via OnceCell; integration is optional and fail-closed
+- Decision(s): Proceed with Draft PR #72; keep exporter setup external to crate; maintain feature-gated design
+- Follow-ups:
+  - Provide example wiring with OTLP exporter in README; consider property tests with test meter provider
+
+
+- Area: Runtime|Storage|Observability
+- Context/Goal: Implement follow-ups from staff review for Blob Store MVP (T-6a-E4-BS-06): edge-case tests, observability hooks, Windows rename handling; open PR.
+- Actions:
+  - Created branch feat/blob-store-improvements from synced main
+  - Added tests: empty blob round-trip; explicit NotFound
+  - Added pluggable observability hooks (put/get bytes; cleanup count) + optional spans; default no-op
+  - Handled Windows rename race by treating AlreadyExists as success if final exists
+  - Updated docs: duplicate-revealing deterministic nonces; key rotation considerations
+  - Ran validations: cargo fmt, clippy (deny warnings), crate+workspace tests
+  - Opened draft PR #71; created Issue #70 to track follow-ups
+- Results:
+  - cargo clippy -p blob_store -- -D warnings: PASS
+  - cargo test -p blob_store -- --nocapture: PASS (8 tests)
+  - cargo test --workspace -- --nocapture: PASS
+  - Pushed branch and opened draft PR #71 referencing Issue #70
+- Diagnostics:
+  - No functional changes to on-disk format; observability is optional and disabled by default (no-op)
+  - Tests confirm empty-blob identity/determinism and NotFound behavior
+- Decision(s): Proceed with PR #71 as Draft; keep OTel wiring in a subsequent change to minimize risk
+- Follow-ups:
+  - Wire hooks to telemetry crate (`otel` feature): counters blob.put.bytes, blob.get.bytes, blob.cleanup.count; add spans
+  - Property tests across sizes; bound decompression allocations; streaming IO for large blobs
+
+
 - Date (UTC): 2025-10-27 02:18
 - Area: Runtime|Storage|Security|Docs
 - Context/Goal: Complete T-6a-E4-BS-06 (Blob Store MVP) by squash-merging PR #69, closing Issue #6, cleaning up branches, syncing main, and validating post-merge.
