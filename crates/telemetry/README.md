@@ -55,6 +55,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+## Example: end-to-end OTLP export
+
+Run the example with the `otel` feature to initialize the OTLP HTTP exporter via environment variables and emit blob metrics/spans:
+
+```
+# In one terminal, run an OTLP receiver (e.g., OpenTelemetry Collector) on http://localhost:4318
+# Then in this repo:
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
+OTEL_SERVICE_NAME=orchestrator \
+cargo run -p telemetry --features otel --example blob_otlp
+```
+
+This example calls `telemetry::init_otlp_from_env()` and registers the blob observer:
+
+```rust
+telemetry::init_otlp_from_env()?;
+blob_store::set_observer(telemetry::blob_observer::global());
+```
+
+
 ## Testing locally
 
 - `cargo test -p telemetry --all-features -- --nocapture`

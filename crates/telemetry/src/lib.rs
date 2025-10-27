@@ -43,6 +43,54 @@ pub fn init_otel(service_name: &str) -> Result<(), TelemetryError> {
 }
 
 #[cfg(feature = "otel")]
+static OTLP_INIT: once_cell::sync::OnceCell<()> = once_cell::sync::OnceCell::new();
+
+/// Initialize OTLP HTTP exporter for tracing and metrics using environment variables.
+/// Env:
+/// - OTEL_EXPORTER_OTLP_ENDPOINT (e.g., http://localhost:4318)
+/// - OTEL_SERVICE_NAME (fallback ORCA_SERVICE_NAME; default "orchestrator")
+#[cfg(feature = "otel")]
+pub fn init_otlp_from_env() -> Result<(), TelemetryError> {
+    use opentelemetry::{global, KeyValue};
+    use opentelemetry_sdk::trace as sdktrace;
+    use opentelemetry_sdk::{runtime, Resource};
+    use opentelemetry_otlp::WithExportConfig;
+
+
+    if OTLP_INIT.get().is_some() {
+        return Ok(());
+    }
+
+    let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:4318".to_string());
+    let service_name = std::env::var("OTEL_SERVICE_NAME")
+        .or_else(|_| std::env::var("ORCA_SERVICE_NAME"))
+        .unwrap_or_else(|_| "orchestrator".to_string());
+
+    let resource = Resource::new(vec![KeyValue::new("service.name", service_name)]);
+
+    // Traces
+    let _tracer_provider = opentelemetry_otlp::new_pipeline()
+        .tracing()
+        .with_exporter(opentelemetry_otlp::new_exporter().http().with_endpoint(endpoint.clone()))
+        .with_trace_config(sdktrace::config().with_resource(resource.clone()))
+        .install_batch(runtime::Tokio)
+        .map_err(|e| TelemetryError::Otel(e.to_string()))?;
+
+    // Metrics
+    let meter_provider = opentelemetry_otlp::new_pipeline()
+        .metrics(runtime::Tokio)
+        .with_exporter(opentelemetry_otlp::new_exporter().http().with_endpoint(endpoint))
+        .with_resource(resource)
+        .build()
+        .map_err(|e| TelemetryError::Otel(e.to_string()))?;
+    global::set_meter_provider(meter_provider);
+
+    let _ = OTLP_INIT.set(());
+    Ok(())
+}
+
+#[cfg(feature = "otel")]
 pub mod metrics {
     //! OTel metrics (OTLP) for budget usage.
     use super::TelemetryError;

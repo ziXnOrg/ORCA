@@ -1,3 +1,25 @@
+- Date (UTC): 2025-10-27 03:37
+- Area: Observability|Storage
+- Context/Goal: Enhance Blob Store OTel integration with real RAII spans, an OTLP wiring example, and property tests to validate metric correctness across sizes.
+- Actions:
+  - Upgraded blob_store::BlobSpan to hold type-erased guard for RAII span exit without adding tracing dep to blob_store.
+  - telemetry[otel]: enter real tracing spans in blob_observer::span() and wrap guard in BlobSpan.
+  - Added low-cardinality metric attributes: op={put|get|cleanup}.
+  - Added README with OTLP exporter example and observer registration snippet.
+  - Added property tests (proptest) for metric deltas across sizes; kept counters low-cardinality.
+  - Ran validation: fmt, clippy --all-features -D warnings, and tests workspace-wide.
+- Results:
+  - All checks passed locally. Property tests exercised sizes: 0, 1, 1KB, <=4KB, 1MB.
+  - PR #72 updated with the new enhancements and validation evidence.
+- Diagnostics:
+  - tracing::EnteredSpan is !Send; adjusted BlobSpan guard erasure to not require Send.
+  - Removed unused import; ensured metrics maintain low cardinality.
+- Decision(s): Keep RAII via type-erased guard; spans are best-effort under `otel` feature only; retain fail-closed defaults when observer not set.
+- Follow-ups:
+  - Optional: expose span attributes (digest prefix length-limited) if needed; evaluate impact on cardinality.
+  - Optional: benchmark blob IO overhead with metrics enabled vs disabled (<5% target as per perf budgets).
+
+
 - Date (UTC): 2025-10-27 02:47
 - Date (UTC): 2025-10-27 03:15
 - Area: Observability|Storage
