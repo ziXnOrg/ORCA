@@ -1,4 +1,27 @@
 - Date (UTC): 2025-10-27 02:47
+- Date (UTC): 2025-10-27 03:15
+- Area: Observability|Storage
+- Context/Goal: Implement OTel-backed observer for Blob Store hooks and validate end-to-end; open Draft PR.
+- Actions:
+  - Synced main; created branch feat/blob-store-otel-integration
+  - Merged feat/blob-store-improvements into branch to access BlobStoreObserver trait (PR #71)
+  - Added telemetry::blob_observer (feature `otel`): counters blob.put.bytes, blob.get.bytes, blob.cleanup.count; best-effort spans
+  - Added integration test (feature `otel`) registering observer and exercising put/get/cleanup
+  - Ran validations: cargo fmt; cargo clippy --workspace --all-features -D warnings; cargo test (crate + workspace, all-features)
+  - Opened Draft PR #72
+- Results:
+  - cargo clippy --workspace --all-features -- -D warnings: PASS
+  - cargo test -p telemetry --all-features -- --nocapture: PASS (1 test)
+  - cargo test -p blob_store --all-features -- --nocapture: PASS (8 tests)
+  - cargo test --workspace --all-features -- --nocapture: PASS
+- Diagnostics:
+  - Initial unresolved imports due to trait not on main; resolved by merging improvements branch
+  - Metrics are low-cardinality; instruments initialized via OnceCell; integration is optional and fail-closed
+- Decision(s): Proceed with Draft PR #72; keep exporter setup external to crate; maintain feature-gated design
+- Follow-ups:
+  - Provide example wiring with OTLP exporter in README; consider property tests with test meter provider
+
+
 - Area: Runtime|Storage|Observability
 - Context/Goal: Implement follow-ups from staff review for Blob Store MVP (T-6a-E4-BS-06): edge-case tests, observability hooks, Windows rename handling; open PR.
 - Actions:
