@@ -52,10 +52,9 @@ static OTLP_INIT: once_cell::sync::OnceCell<()> = once_cell::sync::OnceCell::new
 #[cfg(feature = "otel")]
 pub fn init_otlp_from_env() -> Result<(), TelemetryError> {
     use opentelemetry::{global, KeyValue};
+    use opentelemetry_otlp::WithExportConfig;
     use opentelemetry_sdk::trace as sdktrace;
     use opentelemetry_sdk::{runtime, Resource};
-    use opentelemetry_otlp::WithExportConfig;
-
 
     if OTLP_INIT.get().is_some() {
         return Ok(());
