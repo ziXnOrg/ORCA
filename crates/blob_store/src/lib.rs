@@ -13,6 +13,11 @@
 //!   digest verification on read.
 //! - Errors never include secrets; integrity failures do not leak key material.
 //!
+//! Note: deterministic nonces reveal duplicate content across writes for the same key.
+//! For production deployments, plan key rotation with multi-key providers or key IDs to
+//! allow decrypting existing blobs during transition windows; this crate does not persist
+//! key IDs and assumes the reader can supply historical keys when needed.
+
 //! Determinism Guarantees
 //! - `Digest` identity is computed on plaintext only.
 //! - Compression uses a fixed zstd level (default 3) for stable output.
@@ -39,6 +44,7 @@ use std::{
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
+    sync::OnceLock,
 };
 
 use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
@@ -102,6 +108,48 @@ impl KeyProvider for DevKeyProvider {
     }
 }
 
+/// Optional observability hooks (low-cardinality counters and spans).
+/// By default these are no-ops. Integrations may register a global observer
+/// to emit metrics/traces via OpenTelemetry or other backends.
+pub trait BlobStoreObserver: Send + Sync {
+    /// Increment logical plaintext bytes accepted by put() operations.
+    fn put_bytes(&self, _n: u64) {}
+    /// Increment logical plaintext bytes returned by get() operations.
+    fn get_bytes(&self, _n: u64) {}
+    /// Increment the number of incomplete artifacts cleaned up.
+    fn cleanup_count(&self, _n: u64) {}
+    /// Start an optional span; dropping ends it.
+    fn span(&self, _name: &'static str) -> BlobSpan {
+        BlobSpan
+    }
+}
+
+/// Guard object for optional spans.
+pub struct BlobSpan;
+impl Drop for BlobSpan {
+    fn drop(&mut self) {}
+}
+
+struct NoopObserver;
+impl BlobStoreObserver for NoopObserver {}
+
+static NOOP_OBSERVER: NoopObserver = NoopObserver;
+static OBSERVER: OnceLock<&'static dyn BlobStoreObserver> = OnceLock::new();
+
+/// Register a global observer for blob store metrics/spans (optional).
+/// Safe to call at most once; subsequent calls are ignored.
+pub fn set_observer(observer: &'static dyn BlobStoreObserver) {
+    let _ = OBSERVER.set(observer);
+}
+
+fn observer() -> &'static dyn BlobStoreObserver {
+    if let Some(o) = OBSERVER.get() {
+        *o
+    } else {
+        &NOOP_OBSERVER
+    }
+}
+
 /// Blob store configuration
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -121,6 +169,7 @@ impl Config {
 /// Blob Store API
 pub struct BlobStore<K: KeyProvider> {
     cfg: Config,
+
     key: K,
 }
 
@@ -157,13 +206,16 @@ impl<K: KeyProvider> BlobStore<K> {
         let hex = digest.to_hex();
         let final_path = self.path_for(&hex);
 
+        let _span = observer().span("blob.put");
+
         // Ensure shard directory exists
         if let Some(parent) = final_path.parent() {
             fs::create_dir_all(parent)?;
         }
 
-        // Idempotent: if already present, return digest
+        // Idempotent: if already present, count and return digest
         if final_path.exists() {
+            observer().put_bytes(bytes.len() as u64);
             return Ok(digest);
         }
 
@@ -197,18 +249,32 @@ impl<K: KeyProvider> BlobStore<K> {
             f.write_all(&ciphertext)?;
             f.sync_all()?;
         }
-        fs::rename(&tmp_path, &final_path)?;
+        match fs::rename(&tmp_path, &final_path) {
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                if final_path.exists() {
+                    let _ = fs::remove_file(&tmp_path);
+                } else {
+                    return Err(Error::Io(e));
+                }
+            }
+            Err(e) => return Err(Error::Io(e)),
+        }
         if let Some(parent) = final_path.parent() {
             if let Ok(dirf) = fs::File::open(parent) {
                 let _ = dirf.sync_all();
             }
         }
 
+        observer().put_bytes(bytes.len() as u64);
+
         Ok(digest)
     }
 
     /// Retrieve plaintext bytes by digest
     pub fn get(&self, digest: &Digest) -> Result<Vec<u8>, Error> {
+        let _span = observer().span("blob.get");
+
         let path = self.path_for(&digest.to_hex());
         let enc = match fs::read(&path) {
             Ok(b) => b,
@@ -244,6 +310,8 @@ impl<K: KeyProvider> BlobStore<K> {
         if Self::digest_of(&plain) != *digest {
             return Err(Error::Integrity);
         }
+        observer().get_bytes(plain.len() as u64);
+
         Ok(plain)
     }
 
@@ -254,6 +322,8 @@ impl<K: KeyProvider> BlobStore<K> {
 
     /// Remove any .incomplete artifacts under root; return count removed
     pub fn cleanup_incomplete(&self) -> Result<usize, Error> {
+        let _span = observer().span("blob.cleanup");
+
         fn walk(dir: &Path, count: &mut usize) -> io::Result<()> {
             for entry in fs::read_dir(dir)? {
                 let entry = entry?;
@@ -272,6 +342,8 @@ impl<K: KeyProvider> BlobStore<K> {
         if root.exists() {
             let _ = walk(&root, &mut removed);
         }
+        observer().cleanup_count(removed as u64);
+
         Ok(removed)
     }
 }
