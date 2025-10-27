@@ -1,3 +1,64 @@
+- Date (UTC): 2025-10-27 01:00
+- Date (UTC): 2025-10-27 01:48
+- Area: Runtime|Storage|Docs
+- Context/Goal: REFACTOR phase for T-6a-E4-BS-06 — add comprehensive rustdoc, clean warnings, and validate workspace gates.
+- Actions:
+  - Wrote module-level docs (security model, determinism, atomicity), per-item rustdoc, and usage example doctest
+  - Removed unused imports in tests; enabled `#![warn(missing_docs)]`
+  - Ran `cargo fmt`, `cargo clippy -p blob_store -D warnings`, `cargo test -p blob_store`, and `cargo test --workspace`
+- Results:
+  - All crate and workspace tests PASS; doctest PASS; clippy PASS; fmt clean
+- Diagnostics:
+  - Current design intentionally uses deterministic nonces (SHA256(key||digest)[..12]) to meet dedup/determinism goals; integrity verified with AEAD tag and digest
+- Decision(s):
+  - Keep WARN on missing_docs (public items covered); consider DENY in follow-up once broader workspace is aligned
+- Follow-ups:
+  - Add low-cardinality metrics/logs in subsequent change; consider property tests for larger ranges and streaming IO
+
+
+- Date (UTC): 2025-10-27 01:29
+- Area: Runtime|Storage|Crypto
+- Context/Goal: GREEN phase for T-6a-E4-BS-06 — implement CAS + zstd + AES-256-GCM to satisfy RED tests deterministically and fail-closed.
+- Actions:
+  - Implemented BlobStore::put (digest→compress→encrypt→atomic rename, dir fsync)
+  - Implemented BlobStore::get (read→decrypt→decompress→digest verify)
+  - Implemented cleanup_incomplete() to remove *.incomplete artifacts
+  - Added deterministic nonce derivation from key+digest via SHA-256(first 12 bytes)
+  - Ran clippy (deny warnings) and tests for crate
+- Results:
+  - cargo clippy -p blob_store -- -D warnings: PASS
+  - cargo test -p blob_store -- --nocapture: 6 passed, 0 failed
+- Diagnostics:
+  - Decrypt failures mapped to Integrity to satisfy wrong-key and tamper tests
+  - Local #[allow(deprecated)] applied around Key/Nonce::from_slice due to upstream generic-array deprecation; avoids changing deps in this step
+- Decision(s):
+  - Keep deterministic nonce derivation (SHA-256(key||digest)[..12]) to ensure uniqueness per key and content
+  - Maintain fixed zstd level (3); consider stream-based IO in follow-up for large blobs
+- Follow-ups:
+  - REFACTOR phase: rustdoc for public API, low-cardinality metrics, structured logs; property tests for idempotence and determinism; revisit deps to remove deprecated API usage when safe
+
+
+- Area: Runtime
+- Context/Goal: Kick off T-6a-E4-BS-06 — Blob Store MVP (CAS + zstd + encryption-at-rest) with TDD (RED phase) to establish deterministic, fail-closed artifact storage foundation.
+- Actions:
+  - Created feature branch feat/blob-store-mvp from main
+  - Added new crate crates/blob_store and registered it in workspace Cargo.toml
+  - Drafted RED tests covering: CAS digest identity, idempotent put, round-trip integrity, wrong-key failure, tamper detection, partial-write detection, deterministic behavior across runs
+  - Ran targeted tests: cargo test -p blob_store -- --nocapture (expected failures)
+- Results:
+  - 6 failing tests as expected (RED); compile warnings noted (unused imports in tests, key field unused pending GREEN)
+  - Validated acceptance coverage and deterministic test data generation
+- Diagnostics:
+  - Identity digest computed on plaintext; encryption-at-rest will derive deterministic nonce from digest to preserve determinism while ensuring unique nonces per key
+  - Atomic write plan: temp file + fsync + atomic rename; directory fsync at sharded path
+- Decision(s):
+  - Use AES-256-GCM with 32-byte key via KeyProvider trait; fixed zstd level (3) for deterministic compression at rest
+  - Sharded path layout sha256/aa/bb/<digest>; read-only rollback mode planned
+- Follow-ups:
+  - Implement GREEN phase: streaming write path (compress→encrypt), read/decrypt/verify, idempotent put, partial-write cleanup, error taxonomy
+  - Add low-cardinality metrics (blob.put.bytes, blob.get.bytes) and structured logs in REFACTOR
+
+
 - Date (UTC): 2025-10-27 00:22
 - Area: Policy|CI|Docs|Git
 - Context/Goal: Finalize T-6a-E2-POL-05 by merging PR #67 to main, closing Issue #5, cleaning up branches, syncing main, and validating post-merge.
