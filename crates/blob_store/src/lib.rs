@@ -194,6 +194,10 @@ const FILE_MAGIC: [u8; 4] = *b"BS2\0";
 const FILE_VERSION: u8 = 1;
 /// Default plaintext/compressed chunk size (bounds memory on read/write)
 const CHUNK_SIZE: usize = 64 * 1024; // 64 KiB
+/// AEAD tag size for AES-256-GCM (bytes)
+const AEAD_TAG_SIZE: usize = 16;
+/// Absolute upper bound for header-declared chunk size to avoid pathological allocations
+const MAX_CHUNK_SIZE: usize = 4 * 1024 * 1024; // 4 MiB hard cap
 
 /// Derive a deterministic 96-bit nonce prefix from (key, digest).
 /// The per-chunk nonce is constructed as `prefix[..8] || counter_be32`.
@@ -254,6 +258,8 @@ struct DecryptedCompressedReader {
     counter: u32,
     buf: Vec<u8>,
     pos: usize,
+    // Enforced upper bound from BS2 header; prevents oversize allocations
+    chunk_size: usize,
 }
 impl DecryptedCompressedReader {
     fn refill(&mut self) -> Result<(), Error> {
@@ -268,6 +274,10 @@ impl DecryptedCompressedReader {
             Err(e) => return Err(Error::Io(e)),
         }
         let clen = u32::from_be_bytes(len_buf) as usize;
+        // Bound checks before allocating/reading to avoid unbounded growth
+        if clen == 0 || clen > self.chunk_size + AEAD_TAG_SIZE {
+            return Err(Error::Integrity);
+        }
         self.buf.resize(clen, 0);
         self.file.read_exact(&mut self.buf)?;
         let mut nonce_bytes = [0u8; 12];
@@ -528,6 +538,7 @@ impl<K: KeyProvider> BlobStore<K> {
     ///   zstd `read::Decoder` → hashing writer; verify computed digest == expected
     /// - Else (legacy): single-shot decrypt (nonce = prefix) of full compressed stream and
     ///   stream-decompress via `read::Decoder`
+    /// - Enforces header-declared `chunk_size` and rejects any chunk with length > chunk_size + 16 (AEAD tag)
     /// - Returns total plaintext bytes written; increments observer counters.
     pub fn get_to_writer<W: Write>(&self, digest: &Digest, mut writer: W) -> Result<usize, Error> {
         let _span = observer().span("blob.get");
@@ -585,7 +596,10 @@ impl<K: KeyProvider> BlobStore<K> {
         }
         let mut sz = [0u8; 4];
         sz.copy_from_slice(&header[5..9]);
-        let _chunk_size = u32::from_be_bytes(sz) as usize;
+        let hdr_chunk_size = u32::from_be_bytes(sz) as usize;
+        if hdr_chunk_size == 0 || hdr_chunk_size > MAX_CHUNK_SIZE {
+            return Err(Error::Integrity);
+        }
 
         let key_bytes = self.key.key_bytes();
         #[allow(deprecated)]
@@ -600,6 +614,7 @@ impl<K: KeyProvider> BlobStore<K> {
             counter: 0,
             buf: Vec::new(),
             pos: 0,
+            chunk_size: hdr_chunk_size,
         };
         let mut dec = zstd::stream::read::Decoder::new(reader).map_err(|_| Error::Integrity)?;
         let mut hw = HashingWriter::new(&mut writer);

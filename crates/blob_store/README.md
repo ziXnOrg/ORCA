@@ -29,6 +29,7 @@ Determinism:
 
 Memory bounds:
 - Working set is O(chunk_size) on both put and get paths (default 64 KiB)
+- Read path enforces header-declared chunk_size and rejects any chunk length > chunk_size + 16 (AEAD tag)
 - No unbounded allocations on control paths; large payloads are streamed via temp files
 
 Legacy compatibility:

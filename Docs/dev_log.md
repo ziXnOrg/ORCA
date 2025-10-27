@@ -1,5 +1,23 @@
 - Date (UTC): 2025-10-27 07:02
 - Date (UTC): 2025-10-27 08:34
+- Date (UTC): 2025-10-27 09:11
+- Area: Storage|Docs|Observability
+- Context/Goal: T-6a-E4-BS-07 REFACTOR — document BS2 streaming format, memory bounds, determinism; README and rustdoc polish.
+- Actions:
+  - Expanded rustdoc in crates/blob_store/src/lib.rs (BS2 header/chunks, nonce scheme, legacy fallback, memory bounds). Added docs to HashingWriter/DecryptedCompressedReader and streaming APIs.
+  - Added crates/blob_store/README.md with BS2 format, usage examples (put_reader/get_to_writer), perf/memory notes.
+  - Ran fmt/clippy/tests; executed OTLP example.
+- Results:
+  - cargo fmt/clippy/tests: PASS (workspace, all-features). Doc-tests: PASS.
+  - Example run: started but OTLP exporter reports missing HTTP client feature.
+- Diagnostics:
+  - opentelemetry-otlp requires a client feature (e.g., reqwest-client) in addition to http-proto; current features omit it.
+- Decision(s):
+  - Keep example as-is; request approval to add `reqwest-client` feature in telemetry crate to make example fully functional by default.
+- Follow-ups:
+  - Post review on PR #74, add client feature via `cargo add opentelemetry-otlp -F reqwest-client` (with approval) or as a small follow-up PR.
+
+
 - Area: Storage|Performance|Observability
 - Context/Goal: T-6a-E4-BS-07 GREEN — implement bounded-memory streaming put/get with OTel counters while preserving determinism and back-compat.
 - Actions:
