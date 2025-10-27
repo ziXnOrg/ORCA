@@ -30,3 +30,7 @@ otel = [
   "once_cell",
   "blob_store",
 ]
+
+
+[dev-dependencies]
+proptest = "1.4"

@@ -4,8 +4,8 @@
 use once_cell::sync::OnceCell;
 use opentelemetry::global;
 use opentelemetry::metrics::{Counter, Meter, Unit};
+use opentelemetry::KeyValue;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tracing::trace;
 
 use ::blob_store::{BlobSpan, BlobStoreObserver};
 
@@ -53,28 +53,29 @@ impl BlobStoreObserver for OtelBlobObserver {
     fn put_bytes(&self, n: u64) {
         if n > 0 {
             let inst = ensure_instruments();
-            inst.put_bytes.add(n, &[]);
+            inst.put_bytes.add(n, &[KeyValue::new("op", "put")]);
             let _ = PUT_ACC.fetch_add(n, Ordering::Relaxed);
         }
     }
     fn get_bytes(&self, n: u64) {
         if n > 0 {
             let inst = ensure_instruments();
-            inst.get_bytes.add(n, &[]);
+            inst.get_bytes.add(n, &[KeyValue::new("op", "get")]);
             let _ = GET_ACC.fetch_add(n, Ordering::Relaxed);
         }
     }
     fn cleanup_count(&self, n: u64) {
         if n > 0 {
             let inst = ensure_instruments();
-            inst.cleanup_count.add(n, &[]);
+            inst.cleanup_count.add(n, &[KeyValue::new("op", "cleanup")]);
             let _ = CLEAN_ACC.fetch_add(n, Ordering::Relaxed);
         }
     }
     fn span(&self, name: &'static str) -> BlobSpan {
-        // Best-effort: create a tracing span (no guard can be returned via BlobSpan)
-        trace!(target: "orca.blob", op = name, "blob op start");
-        BlobSpan
+        let span = tracing::span!(tracing::Level::INFO, "blob", op = name);
+        // Enter the span; guard exits on drop.
+        let entered = span.entered();
+        ::blob_store::BlobSpan::from_guard(entered)
     }
 }
 

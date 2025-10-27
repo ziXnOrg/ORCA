@@ -5111,6 +5111,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "orca-core",
+ "proptest",
  "thiserror 1.0.69",
  "tracing",
  "tracing-subscriber",
