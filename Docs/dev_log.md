@@ -1,3 +1,24 @@
+- Date (UTC): 2025-10-27 00:22
+- Area: Policy|CI|Docs|Git
+- Context/Goal: Finalize T-6a-E2-POL-05 by merging PR #67 to main, closing Issue #5, cleaning up branches, syncing main, and validating post-merge.
+- Actions:
+  - Verified CI checks on head 647c206: build-test (ubuntu/macos), coverage, otel-and-replay smoke — all SUCCESS
+  - Squash-merged PR #67 → main with title: feat(policy): fail-closed governance baseline (T-6a-E2-POL-05)
+  - Closed Issue #5 with comment linking PR and merge commit
+  - Deleted branch feat/policy-baseline (remote and local); synced local main (fast-forward)
+  - Post-merge validation on main: cargo test --workspace -- --nocapture (PASS)
+- Results:
+  - Merge commit: a101076791e713904aa62bf8cfe0c0662d8ba77a on main
+  - Issue #5: CLOSED (commented with PR link and SHA)
+  - Repo clean: branch removed; main up-to-date locally
+  - Tests: PASS (workspace)
+- Diagnostics:
+  - Prior CI failures were rustfmt-only in crates/policy/tests/baseline.rs; resolved via cargo fmt
+- Decision(s): Task T-6a-E2-POL-05 complete; fail-closed baseline retained; proceed to next task on fresh branch from main.
+- Follow-ups:
+  - Author admin docs for YAML schema and precedence examples (tracked)
+
+
 - Date (UTC): 2025-10-26 22:59
 - Area: Policy
 - Context/Goal: Complete T-6a-E2-POL-05 (Governance baseline) with fail-closed deny-on-error semantics, deterministic precedence, and documentation; finalize RED→GREEN→REFACTOR.
