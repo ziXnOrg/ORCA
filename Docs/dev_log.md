@@ -1,4 +1,26 @@
 - Date (UTC): 2025-10-27 01:00
+- Date (UTC): 2025-10-27 01:29
+- Area: Runtime|Storage|Crypto
+- Context/Goal: GREEN phase for T-6a-E4-BS-06 — implement CAS + zstd + AES-256-GCM to satisfy RED tests deterministically and fail-closed.
+- Actions:
+  - Implemented BlobStore::put (digest→compress→encrypt→atomic rename, dir fsync)
+  - Implemented BlobStore::get (read→decrypt→decompress→digest verify)
+  - Implemented cleanup_incomplete() to remove *.incomplete artifacts
+  - Added deterministic nonce derivation from key+digest via SHA-256(first 12 bytes)
+  - Ran clippy (deny warnings) and tests for crate
+- Results:
+  - cargo clippy -p blob_store -- -D warnings: PASS
+  - cargo test -p blob_store -- --nocapture: 6 passed, 0 failed
+- Diagnostics:
+  - Decrypt failures mapped to Integrity to satisfy wrong-key and tamper tests
+  - Local #[allow(deprecated)] applied around Key/Nonce::from_slice due to upstream generic-array deprecation; avoids changing deps in this step
+- Decision(s):
+  - Keep deterministic nonce derivation (SHA-256(key||digest)[..12]) to ensure uniqueness per key and content
+  - Maintain fixed zstd level (3); consider stream-based IO in follow-up for large blobs
+- Follow-ups:
+  - REFACTOR phase: rustdoc for public API, low-cardinality metrics, structured logs; property tests for idempotence and determinism; revisit deps to remove deprecated API usage when safe
+
+
 - Area: Runtime
 - Context/Goal: Kick off T-6a-E4-BS-06 — Blob Store MVP (CAS + zstd + encryption-at-rest) with TDD (RED phase) to establish deterministic, fail-closed artifact storage foundation.
 - Actions:

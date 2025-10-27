@@ -9,7 +9,15 @@
 
 #![warn(missing_docs)]
 
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    io::{self, Write},
+    path::{Path, PathBuf},
+};
+use std::io::Cursor;
+
+use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
+use zstd::stream::{decode_all as zstd_decode_all, encode_all as zstd_encode_all};
 
 /// 32-byte SHA-256 digest type
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -118,15 +126,102 @@ impl<K: KeyProvider> BlobStore<K> {
     }
 
     /// Store bytes and return their content digest (CAS). Idempotent on same content.
-    pub fn put(&self, _bytes: &[u8]) -> Result<Digest, Error> {
-        // RED-phase stub: not implemented yet
-        Err(Error::Io(std::io::Error::new(std::io::ErrorKind::Other, "not implemented (RED)")))
+    pub fn put(&self, bytes: &[u8]) -> Result<Digest, Error> {
+        // Compute plaintext digest (identity)
+        let digest = Self::digest_of(bytes);
+        let hex = digest.to_hex();
+        let final_path = self.path_for(&hex);
+
+        // Ensure shard directory exists
+        if let Some(parent) = final_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        // Idempotent: if already present, return digest
+        if final_path.exists() {
+            return Ok(digest);
+        }
+
+        // Compress deterministically
+        let compressed = zstd_encode_all(Cursor::new(bytes), self.cfg.zstd_level)?;
+
+        // Derive deterministic nonce from key + digest
+        use sha2::Digest as _;
+        let key_bytes = self.key.key_bytes();
+        let mut h = sha2::Sha256::new();
+        h.update(key_bytes);
+        h.update(digest.0);
+        let n = h.finalize();
+        let mut nonce_bytes = [0u8; 12];
+        nonce_bytes.copy_from_slice(&n[..12]);
+
+        // Encrypt compressed payload
+        #[allow(deprecated)]
+        let key = aes_gcm::Key::<Aes256Gcm>::from_slice(&key_bytes);
+        let cipher = Aes256Gcm::new(key);
+        #[allow(deprecated)]
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let ciphertext = cipher
+            .encrypt(nonce, compressed.as_ref())
+            .map_err(|_| Error::Crypto("encrypt".to_string()))?;
+
+        // Write atomically: tmp -> fsync -> rename -> fsync dir
+        let tmp_path = final_path.with_extension("incomplete");
+        {
+            let mut f = fs::File::create(&tmp_path)?;
+            f.write_all(&ciphertext)?;
+            f.sync_all()?;
+        }
+        fs::rename(&tmp_path, &final_path)?;
+        if let Some(parent) = final_path.parent() {
+            if let Ok(dirf) = fs::File::open(parent) {
+                let _ = dirf.sync_all();
+            }
+        }
+
+        Ok(digest)
     }
 
     /// Retrieve plaintext bytes by digest
-    pub fn get(&self, _digest: &Digest) -> Result<Vec<u8>, Error> {
-        // RED-phase stub
-        Err(Error::NotFound)
+    pub fn get(&self, digest: &Digest) -> Result<Vec<u8>, Error> {
+        let path = self.path_for(&digest.to_hex());
+        let enc = match fs::read(&path) {
+            Ok(b) => b,
+            Err(e) => {
+                return if e.kind() == io::ErrorKind::NotFound {
+                    Err(Error::NotFound)
+                } else {
+                    Err(Error::Io(e))
+                }
+            }
+        };
+
+        // Re-derive deterministic nonce from key + digest
+        use sha2::Digest as _;
+        let key_bytes = self.key.key_bytes();
+        let mut h = sha2::Sha256::new();
+        h.update(key_bytes);
+        h.update(digest.0);
+        let n = h.finalize();
+        let mut nonce_bytes = [0u8; 12];
+        nonce_bytes.copy_from_slice(&n[..12]);
+
+        #[allow(deprecated)]
+        let key = aes_gcm::Key::<Aes256Gcm>::from_slice(&key_bytes);
+        let cipher = Aes256Gcm::new(key);
+        #[allow(deprecated)]
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let compressed = cipher
+            .decrypt(nonce, enc.as_ref())
+            .map_err(|_| Error::Integrity)?;
+
+        let plain = zstd_decode_all(Cursor::new(compressed)).map_err(|_| Error::Integrity)?;
+
+        if Self::digest_of(&plain) != *digest {
+            return Err(Error::Integrity);
+        }
+        Ok(plain)
     }
 
     /// Return true if a blob with this digest is present
@@ -134,10 +229,27 @@ impl<K: KeyProvider> BlobStore<K> {
         self.path_for(&digest.to_hex()).exists()
     }
 
-    /// Remove any incomplete artifacts; return count removed
+    /// Remove any .incomplete artifacts under root; return count removed
     pub fn cleanup_incomplete(&self) -> Result<usize, Error> {
-        // RED-phase stub
-        Ok(0)
+        fn walk(dir: &Path, count: &mut usize) -> io::Result<()> {
+            for entry in fs::read_dir(dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_dir() {
+                    let _ = walk(&path, count);
+                } else if path.extension().map(|e| e == "incomplete").unwrap_or(false) {
+                    fs::remove_file(&path)?;
+                    *count += 1;
+                }
+            }
+            Ok(())
+        }
+        let mut removed = 0usize;
+        let root = self.cfg.root.join("sha256");
+        if root.exists() {
+            let _ = walk(&root, &mut removed);
+        }
+        Ok(removed)
     }
 }
 
