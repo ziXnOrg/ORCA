@@ -1,3 +1,21 @@
+- Date (UTC): 2025-10-27 07:02
+- Area: Observability|Storage|CI
+- Context/Goal: Verify, convert PR #72 to Ready, merge (squash), and validate on main.
+- Actions:
+  - Ran: cargo fmt --all -- --check (found minor fmt); cargo fmt --all; cargo clippy --workspace --all-features -D warnings; cargo test --workspace --all-features -- --nocapture (PASS).
+  - Updated PR #72 title; converted Draft → Ready via PATCH draft:false (POST ready_for_review endpoint 404s in tool).
+  - Squash-merged PR #72 with descriptive commit title/message.
+  - Pulled main and re-ran full workspace tests (PASS).
+- Results:
+  - Main branch includes: OTel blob observer, RAII spans, OTLP init helper, example, tests.
+  - All gates PASS on main.
+- Diagnostics:
+  - Local working copy missed `crates/telemetry/src/blob_observer.rs` post-merge despite being tracked; restored with `git restore`.
+- Decision(s): Proceed to plan next task focused on Blob Store streaming/bounds (Issue #70).
+- Follow-ups:
+  - Close/resolve PR #71 if superseded by #72; ensure Issue #70 links updated.
+
+
 - Date (UTC): 2025-10-27 05:10
 - Area: Observability|Storage
 - Context/Goal: Add minimal OTLP HTTP exporter init helper and an end-to-end example; move PR #72 toward review readiness.
