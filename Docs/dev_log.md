@@ -1,3 +1,25 @@
+- Date (UTC): 2025-10-27 05:10
+- Area: Observability|Storage
+- Context/Goal: Add minimal OTLP HTTP exporter init helper and an end-to-end example; move PR #72 toward review readiness.
+- Actions:
+  - telemetry[otel]: added `init_otlp_from_env()` (idempotent) initializing tracer+meter providers from env (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`) with HTTP exporter.
+  - Added example binary `crates/telemetry/examples/blob_otlp.rs` demonstrating init helper + observer registration + blob ops (put/get/cleanup) and brief flush wait.
+  - Updated `crates/telemetry/README.md` with example run instructions and snippet.
+  - Ran validation: cargo fmt --all; cargo clippy --workspace --all-features -D warnings; cargo test --workspace --all-features -- --nocapture (PASS).
+  - Updated PR #72 body to document the new helper and example.
+  - Attempted to mark PR #72 Ready for Review via API; endpoint returned 404 (tool limitation). PR remains Draft; manual click needed.
+- Results:
+  - All validations PASS; example builds under `--features otel`.
+  - PR #72 description updated; status still Draft pending manual Ready-for-Review conversion.
+- Diagnostics:
+  - opentelemetry-otlp requires `WithExportConfig` trait in scope for `.with_endpoint(..)`; imported explicitly.
+  - Example uses tokio (dev-dep) to satisfy `install_batch(runtime::Tokio)` exporters; short sleep allows flush.
+- Decision(s): Provide minimal helper rather than subscriber layer hookup; keep feature-gated and fail-closed by default.
+- Follow-ups:
+  - Convert PR #72 to Ready for Review in GitHub UI.
+  - Optional: add force-flush/shutdown hooks for metrics/traces where feasible.
+
+
 - Date (UTC): 2025-10-27 03:37
 - Area: Observability|Storage
 - Context/Goal: Enhance Blob Store OTel integration with real RAII spans, an OTLP wiring example, and property tests to validate metric correctness across sizes.
