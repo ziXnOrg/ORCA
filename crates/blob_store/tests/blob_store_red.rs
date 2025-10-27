@@ -115,3 +115,26 @@ fn deterministic_behavior_across_runs_and_hosts() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn empty_blob_round_trip() -> Result<()> {
+    let dir = temp_dir();
+    let store = store_at(dir.path(), [6u8; 32]);
+    let data = Vec::new();
+    let digest = store.put(&data)?;
+    assert!(store.exists(&digest));
+    let got = store.get(&digest)?;
+    assert_eq!(got, data);
+    Ok(())
+}
+
+#[test]
+fn get_nonexistent_returns_not_found() -> Result<()> {
+    let dir = temp_dir();
+    let store = store_at(dir.path(), [7u8; 32]);
+    let digest = BlobStore::<DevKeyProvider>::digest_of(b"does-not-exist");
+    let err = store.get(&digest).unwrap_err();
+    let s = format!("{err}");
+    assert!(s.contains("not found"));
+    Ok(())
+}
