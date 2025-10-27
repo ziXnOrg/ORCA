@@ -1,4 +1,24 @@
 - Date (UTC): 2025-10-27 07:02
+- Date (UTC): 2025-10-27 23:54
+- Area: Storage|CI|Docs
+- Context/Goal: Complete T-6a-E4-BS-07 (Streaming IO + memory bounds) and T-6a-E4-BS-08 (BS2 read bounds & robustness); merge and validate on main.
+- Actions:
+  - Squash-merged PR #74 to main (commit fd4fd37) with message: feat(blob_store): streaming IO + memory bounds + read robustness (T-6a-E4-BS-07, T-6a-E4-BS-08); body: Closes #73
+  - Deleted remote/local branch feat/blob-store-streaming; synced main
+  - Re-ran workspace validations on main: fmt, clippy (-D warnings), tests (all-features)
+  - Updated Docs/TODO.md: marked BS-07 and BS-08 complete; referenced PR/commit
+  - Issue #73: posted completion comment with merge link; ensured closed
+- Results:
+  - cargo fmt --all -- --check → PASS
+  - cargo clippy --workspace --all-features -- -D warnings → PASS
+  - cargo test --workspace --all-features -- --nocapture → PASS
+- Diagnostics:
+  - Final acceptance met:
+    - BS-07: deterministic digest parity; bounded memory (chunked 64 KiB working set); legacy read fallback; metrics intact; tests pass
+    - BS-08: header-enforced chunk_size bounds; per-chunk clen guards; typed Integrity failures; robustness tests pass
+- Decision(s): Proceed to next Phase 6a priority task per TODO.md; skip optional histogram metric for now as previously agreed.
+- Follow-ups: Identify next NOT_STARTED task (priority order) and prepare RED plan.
+
 - Date (UTC): 2025-10-27 08:34
 - Date (UTC): 2025-10-27 09:28
 - Area: Storage|Security|Tests|Docs
