@@ -1,3 +1,20 @@
+- Date (UTC): 2025-10-28 00:44
+  Area: Policy
+  Context/Goal: GREEN phase for T-6a-E2-POL-05 governance baseline — add observability hooks and audit sink; make RED tests pass.
+  Actions:
+  - Implemented PolicyObserver + set_observer(), policy_metrics() counters, and install_audit_sink() in crates/policy/src/lib.rs
+  - Wired emissions in pre_start_run, pre_submit_task, post_submit_task; added minimal docs and clippy fix
+  - Ran validations: cargo fmt/clippy/tests (policy crate and workspace)
+  Results:
+  - All policy tests PASS (including governance_baseline_red now GREEN)
+  - Workspace tests PASS; clippy -D warnings PASS; fmt --check PASS
+  Diagnostics:
+  - Using OnceLock + Mutex for in-process metrics/audit is sufficient for determinism and low-cardinality counters
+  Decisions:
+  - Proceed to REFACTOR to enhance rustdoc and ensure full observability coverage per rules
+  Follow-ups:
+  - REFACTOR phase: polish docs, add examples, ensure CI gates; then mark PR #76 ready and request review
+
 - Date (UTC): 2025-10-28 00:09
 - Area: Policy|Tests|Docs|Git
 - Context/Goal: Kick off T-6a-E2-POL-05 (Governance baseline) via TDD RED phase: add failing acceptance tests, open branch/issue/PR.
