@@ -72,7 +72,12 @@ fn emits_policy_decision_metrics() {
     impl policy::PolicyObserver for Capture {
         fn on_decision(&self, phase: &str, d: &policy::Decision) {
             // Expect to be called exactly once per evaluation with stable attributes
-            assert!(matches!(d.kind, policy::DecisionKind::Deny | policy::DecisionKind::Modify | policy::DecisionKind::Allow));
+            assert!(matches!(
+                d.kind,
+                policy::DecisionKind::Deny
+                    | policy::DecisionKind::Modify
+                    | policy::DecisionKind::Allow
+            ));
             assert!(matches!(phase, "pre_submit_task" | "pre_start_run" | "post_submit_task"));
         }
     }
@@ -119,7 +124,10 @@ rules:
     assert!(matches!(d.kind, DecisionKind::Allow));
 
     let records = sink.drain();
-    assert!(records.iter().any(|r| r.rule_name == Some("Flag Prompt".into()) && r.action == Some("allow_but_flag".into())));
+    assert!(records
+        .iter()
+        .any(|r| r.rule_name == Some("Flag Prompt".into())
+            && r.action == Some("allow_but_flag".into())));
 }
 
 // Helpers
@@ -127,12 +135,7 @@ use std::fs;
 use std::path::PathBuf;
 fn write_temp_yaml(name: &str, content: &str) -> PathBuf {
     let mut p = std::env::temp_dir();
-    p.push(format!(
-        "policy_gov_{}_{}_{}.yaml",
-        name,
-        std::process::id(),
-        rand_suffix()
-    ));
+    p.push(format!("policy_gov_{}_{}_{}.yaml", name, std::process::id(), rand_suffix()));
     fs::write(&p, content).expect("write temp yaml");
     p
 }
@@ -140,4 +143,3 @@ fn rand_suffix() -> u128 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
 }
-

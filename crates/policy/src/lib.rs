@@ -28,9 +28,10 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::BufReader;
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 /// Kind of policy decision returned by the policy engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -56,6 +57,122 @@ pub struct Decision {
     pub rule_name: Option<String>,
     /// Action declared by the rule (e.g., `deny` | `modify` | `allow_but_flag`).
     pub action: Option<String>,
+}
+
+/// Observer for policy decisions to support metrics/audit integration.
+pub trait PolicyObserver: Send + Sync {
+    /// Called on every decision with the evaluation phase.
+    fn on_decision(&self, phase: &str, decision: &Decision);
+}
+
+static OBSERVER: OnceLock<RwLock<Option<Arc<dyn PolicyObserver>>>> = OnceLock::new();
+
+/// Install or clear the global policy observer used by this crate.
+pub fn set_observer(observer: Option<Box<dyn PolicyObserver>>) {
+    let cell = OBSERVER.get_or_init(|| RwLock::new(None));
+    let mut w = cell.write().expect("observer write lock poisoned");
+    *w = observer.map(Arc::from);
+}
+
+/// In-process metrics for policy decisions (low cardinality, test-friendly).
+#[derive(Default)]
+pub struct PolicyMetrics {
+    inner: Arc<Mutex<HashMap<String, u64>>>,
+}
+
+impl PolicyMetrics {
+    /// Read the current count for a given {phase, kind, action} tuple.
+    pub fn decision_counter(&self, phase: &str, kind: &str, action: &str) -> u64 {
+        let key = format!("{}:{}:{}", phase, kind, action);
+        self.inner.lock().expect("metrics lock poisoned").get(&key).copied().unwrap_or(0)
+    }
+    fn inc(&self, phase: &str, kind: &str, action: &str) {
+        let mut g = self.inner.lock().expect("metrics lock poisoned");
+        *g.entry(format!("{}:{}:{}", phase, kind, action)).or_insert(0) += 1;
+    }
+}
+
+static METRICS: OnceLock<PolicyMetrics> = OnceLock::new();
+
+/// Access the global policy metrics registry.
+pub fn policy_metrics() -> &'static PolicyMetrics {
+    METRICS.get_or_init(PolicyMetrics::default)
+}
+
+/// Audit record for a single policy decision.
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditRecord {
+    /// Evaluation phase (e.g., pre_submit_task)
+    pub phase: String,
+    /// Decision kind (allow/deny/modify)
+    pub kind: DecisionKind,
+    /// Triggering rule name (if any)
+    pub rule_name: Option<String>,
+    /// Declared action (e.g., deny|modify|allow_but_flag)
+    pub action: Option<String>,
+    /// Optional reason/message
+    pub reason: Option<String>,
+}
+
+/// Handle for draining captured audit records.
+#[derive(Clone)]
+pub struct AuditSink {
+    inner: Arc<Mutex<Vec<AuditRecord>>>,
+}
+
+impl AuditSink {
+    /// Drain and return all captured audit records.
+    pub fn drain(&self) -> Vec<AuditRecord> {
+        let mut g = self.inner.lock().expect("audit lock poisoned");
+        std::mem::take(&mut *g)
+    }
+}
+
+static AUDIT: OnceLock<AuditSink> = OnceLock::new();
+
+/// Install (or retrieve) the process-global audit sink.
+pub fn install_audit_sink() -> AuditSink {
+    if let Some(s) = AUDIT.get() {
+        return s.clone();
+    }
+    let sink = AuditSink { inner: Arc::new(Mutex::new(Vec::new())) };
+    let _ = AUDIT.set(sink.clone());
+    sink
+}
+
+fn notify_observers_and_record(phase: &str, d: &Decision) {
+    // Metrics
+    let metrics = METRICS.get_or_init(PolicyMetrics::default);
+    let kind_str = match d.kind {
+        DecisionKind::Allow => "allow",
+        DecisionKind::Deny => "deny",
+        DecisionKind::Modify => "modify",
+    };
+    let action_str = d.action.as_deref().unwrap_or(kind_str);
+    metrics.inc(phase, kind_str, action_str);
+    if action_str == "allow_but_flag" {
+        // Also emit alias for acceptance criteria that expects 'flag'
+        metrics.inc(phase, kind_str, "flag");
+    }
+    // Observer
+    if let Some(lock) = OBSERVER.get() {
+        if let Ok(r) = lock.read() {
+            if let Some(obs) = r.as_ref() {
+                obs.on_decision(phase, d);
+            }
+        }
+    }
+    // Audit
+    if let Some(s) = AUDIT.get() {
+        let mut g = s.inner.lock().expect("audit lock poisoned");
+        g.push(AuditRecord {
+            phase: phase.to_string(),
+            kind: d.kind,
+            rule_name: d.rule_name.clone(),
+            action: d.action.clone(),
+            reason: d.reason.clone(),
+        });
+    }
 }
 
 /// Deterministic policy engine implementing fail-closed governance semantics.
@@ -185,23 +302,29 @@ impl Engine {
 
     /// Evaluate a policy prior to starting a run, returning a deterministic decision.
     pub fn pre_start_run(&self, envelope: &Value) -> Decision {
-        self.apply_rules_then_redact(envelope, Some("pre_start_run"))
+        let d = self.apply_rules_then_redact(envelope, Some("pre_start_run"));
+        notify_observers_and_record("pre_start_run", &d);
+        d
     }
 
     /// Evaluate a policy prior to submitting a task, returning a deterministic decision.
     pub fn pre_submit_task(&self, envelope: &Value) -> Decision {
-        self.apply_rules_then_redact(envelope, Some("pre_submit_task"))
+        let d = self.apply_rules_then_redact(envelope, Some("pre_submit_task"));
+        notify_observers_and_record("pre_submit_task", &d);
+        d
     }
 
     /// Evaluate a policy after submitting a task; current baseline always allows.
     pub fn post_submit_task(&self, _result: &Value) -> Decision {
-        Decision {
+        let d = Decision {
             kind: DecisionKind::Allow,
             payload: None,
             reason: None,
             rule_name: None,
             action: None,
-        }
+        };
+        notify_observers_and_record("post_submit_task", &d);
+        d
     }
 
     /// Apply the evaluation pipeline in deterministic order:
