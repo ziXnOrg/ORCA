@@ -220,6 +220,7 @@ impl OrchestratorService {
         let kind = env.get("kind").and_then(|v| v.as_str());
         let trace_id = env.get("trace_id").and_then(|v| v.as_str());
 
+        let sanitized_reason = d.reason.as_deref().map(redact_pii_reason);
         let evt = json!({
             "event": "policy_audit",
             "phase": phase,
@@ -231,7 +232,7 @@ impl OrchestratorService {
             "trace_id": trace_id,
             "rule_name": d.rule_name,
             "action": d.action,
-            "reason": d.reason,
+            "reason": sanitized_reason,
             "outcome": outcome,
         });
         let _ = self.log.append(
@@ -240,6 +241,40 @@ impl OrchestratorService {
             &evt,
         );
     }
+}
+
+fn redact_pii_reason(input: &str) -> String {
+    // Minimal SSN-like pattern redaction (###-##-####)
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0;
+    while i + 11 <= bytes.len() {
+        let w = &bytes[i..i + 11];
+        let is_digit = |b: u8| b.is_ascii_digit();
+
+        if is_digit(w[0])
+            && is_digit(w[1])
+            && is_digit(w[2])
+            && w[3] == b'-'
+            && is_digit(w[4])
+            && is_digit(w[5])
+            && w[6] == b'-'
+            && is_digit(w[7])
+            && is_digit(w[8])
+            && is_digit(w[9])
+            && is_digit(w[10])
+        {
+            out.push_str("[REDACTED]");
+            i += 11;
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    if i < bytes.len() {
+        out.push_str(&input[i..]);
+    }
+    out
 }
 
 #[allow(clippy::result_large_err, clippy::single_match)]
@@ -257,9 +292,28 @@ impl Orchestrator for OrchestratorService {
         }
         // Pre-policy: allow/deny/modify (redaction)
         if let Some(ref env) = r.initial_task {
-            let _span = info_span!("agent.policy.check", run=%r.workflow_id, phase="pre_start_run", agent=%env.agent).entered();
+            let _span = info_span!(
+                "agent.policy.check",
+                run=%r.workflow_id,
+                phase="pre_start_run",
+                agent=%env.agent,
+                // placeholders recorded after decision
+                decision_kind = tracing::field::Empty,
+                rule_name = tracing::field::Empty
+            )
+            .entered();
             let mut env_json = serde_json::to_value(env).map_err(internal_serde)?;
             let decision = self.policy.read().unwrap().pre_start_run(&env_json);
+            // Record decision attributes on the current span (low-cardinality)
+            let kind_str = match decision.kind {
+                DecisionKind::Allow => "allow",
+                DecisionKind::Deny => "deny",
+                DecisionKind::Modify => "modify",
+            };
+            tracing::Span::current().record("decision_kind", tracing::field::display(kind_str));
+            if let Some(ref rn) = decision.rule_name {
+                tracing::Span::current().record("rule_name", tracing::field::display(rn));
+            }
             self.append_policy_audit(
                 "pre_start_run",
                 None,
@@ -345,10 +399,28 @@ impl Orchestrator for OrchestratorService {
         let mut env_json = {
             let env =
                 r.task.as_ref().ok_or_else(|| Status::invalid_argument("missing envelope"))?;
-            let _span = info_span!("agent.policy.check", run=%r.run_id, phase="pre_submit_task", agent=%env.agent).entered();
+            let _span = info_span!(
+                "agent.policy.check",
+                run=%r.run_id,
+                phase="pre_submit_task",
+                agent=%env.agent,
+                decision_kind = tracing::field::Empty,
+                rule_name = tracing::field::Empty
+            )
+            .entered();
             serde_json::to_value(env).map_err(internal_serde)?
         };
         let decision = self.policy.read().unwrap().pre_submit_task(&env_json);
+        // Record decision attributes on the current span
+        let kind_str = match decision.kind {
+            DecisionKind::Allow => "allow",
+            DecisionKind::Deny => "deny",
+            DecisionKind::Modify => "modify",
+        };
+        tracing::Span::current().record("decision_kind", tracing::field::display(kind_str));
+        if let Some(ref rn) = decision.rule_name {
+            tracing::Span::current().record("rule_name", tracing::field::display(rn));
+        }
         self.append_policy_audit("pre_submit_task", Some(&r.run_id), None, &env_json, &decision);
         match decision.kind {
             DecisionKind::Deny => return Err(Status::permission_denied("policy deny")),

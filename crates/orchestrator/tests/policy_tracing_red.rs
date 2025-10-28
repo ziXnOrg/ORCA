@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use orchestrator::orca_v1::{orchestrator_server::Orchestrator, StartRunRequest, SubmitTaskRequest};
+use orchestrator::orca_v1::{
+    orchestrator_server::Orchestrator, StartRunRequest, SubmitTaskRequest,
+};
 use orchestrator::{orca_v1, OrchestratorService};
 use tracing::field::{Field, Visit};
 use tracing_subscriber::{layer::Context, prelude::*, registry::LookupSpan, Layer, Registry};
@@ -28,7 +30,12 @@ impl<S> Layer<S> for RecordingLayer
 where
     S: tracing::Subscriber + for<'a> LookupSpan<'a>,
 {
-    fn on_new_span(&self, attrs: &tracing::span::Attributes<'_>, id: &tracing::span::Id, ctx: Context<'_, S>) {
+    fn on_new_span(
+        &self,
+        attrs: &tracing::span::Attributes<'_>,
+        id: &tracing::span::Id,
+        ctx: Context<'_, S>,
+    ) {
         // Capture only policy spans
         let meta = ctx.metadata(id).unwrap_or_else(|| attrs.metadata());
         let name = meta.name().to_string();
@@ -40,7 +47,12 @@ where
         }
     }
 
-    fn on_record(&self, id: &tracing::span::Id, values: &tracing::span::Record<'_>, ctx: Context<'_, S>) {
+    fn on_record(
+        &self,
+        id: &tracing::span::Id,
+        values: &tracing::span::Record<'_>,
+        ctx: Context<'_, S>,
+    ) {
         if let Some(span) = ctx.span(id) {
             let meta = span.metadata();
             if meta.name().contains("agent.policy.check") {
@@ -86,7 +98,11 @@ async fn policy_spans_include_required_attributes() {
         usage: None,
     };
     let _ = svc
-        .start_run(tonic::Request::new(StartRunRequest { workflow_id: "wf".into(), initial_task: Some(env), budget: None }))
+        .start_run(tonic::Request::new(StartRunRequest {
+            workflow_id: "wf".into(),
+            initial_task: Some(env),
+            budget: None,
+        }))
         .await
         .unwrap();
 
@@ -104,7 +120,10 @@ async fn policy_spans_include_required_attributes() {
         usage: None,
     };
     let _ = svc
-        .submit_task(tonic::Request::new(SubmitTaskRequest { run_id: "wf".into(), task: Some(env2) }))
+        .submit_task(tonic::Request::new(SubmitTaskRequest {
+            run_id: "wf".into(),
+            task: Some(env2),
+        }))
         .await
         .unwrap();
 
@@ -114,13 +133,12 @@ async fn policy_spans_include_required_attributes() {
     for s in spans.iter() {
         if s.name.contains("agent.policy.check") {
             let has_phase = s.fields.contains_key("phase");
-            let has_decision_kind = s.fields.contains_key("decision.kind"); // RED: currently missing
+            let has_decision_kind = s.fields.contains_key("decision_kind");
             if has_phase && has_decision_kind {
                 ok = true;
                 break;
             }
         }
     }
-    assert!(ok, "expected agent.policy.check spans to include phase and decision.kind attributes");
+    assert!(ok, "expected agent.policy.check spans to include phase and decision_kind attributes");
 }
-

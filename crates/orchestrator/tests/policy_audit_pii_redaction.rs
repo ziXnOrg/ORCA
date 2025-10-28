@@ -17,7 +17,7 @@ async fn audit_reason_redacts_pii_patterns() {
   - name: Redact-PII-Patterns
     when: pii_detect
     action: modify
-    message: redacted: 123-45-6789
+    message: "redacted: 123-45-6789"
 "#,
     )
     .unwrap();
@@ -38,12 +38,16 @@ async fn audit_reason_redacts_pii_patterns() {
         usage: None,
     };
     let _ = svc
-        .submit_task(tonic::Request::new(SubmitTaskRequest { run_id: "r3".into(), task: Some(env) }))
+        .submit_task(tonic::Request::new(SubmitTaskRequest {
+            run_id: "r3".into(),
+            task: Some(env),
+        }))
         .await
         .unwrap();
 
     // Verify audit has no raw PII in reason
-    let recs: Vec<event_log::EventRecord<serde_json::Value>> = log_read.read_range(0, u64::MAX).unwrap();
+    let recs: Vec<event_log::EventRecord<serde_json::Value>> =
+        log_read.read_range(0, u64::MAX).unwrap();
     let audits: Vec<_> = recs
         .into_iter()
         .filter(|r| r.payload.get("event").and_then(|v| v.as_str()) == Some("policy_audit"))
@@ -53,4 +57,3 @@ async fn audit_reason_redacts_pii_patterns() {
     let reason = p.get("reason").and_then(|v| v.as_str()).unwrap_or("");
     assert!(!reason.contains("123-45-6789"), "audit reason must be redacted");
 }
-

@@ -3576,6 +3576,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "telemetry",
 ]
 
 [[package]]
@@ -5113,6 +5114,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "orca-core",
+ "policy",
  "proptest",
  "thiserror 1.0.69",
  "tokio",
