@@ -1,3 +1,22 @@
+- Date (UTC): 2025-10-28 08:15
+- Area: Storage|Tests|Docs|Git
+- Context/Goal: Kick off T-6a-E4-BS-06 (Blob Store MVP: CAS + zstd + encryption) via TDD RED phase, add acceptance tests, push branch, open draft PR/Issue.
+- Actions:
+  - Created branch feat/blob-store-mvp from main
+  - Added acceptance tests in crates/blob_store/tests/mvp_red.rs covering CAS, zstd ratio + round-trip, encryption-at-rest (deterministic ciphertext; wrong-key/tamper), errors, and streaming compatibility
+  - Ran: cargo test -p blob_store --test mvp_red -- --nocapture (tests PASS; implementation already meets AC)
+  - Pushed branch and opened Draft PR #79; created Issue #80 to track task
+- Results:
+  - Tests: PASS (5/5) — RED passed immediately; crate already satisfies MVP AC
+  - Branch: origin/feat/blob-store-mvp; PR #79 (draft) open; Issue #80 open
+- Diagnostics:
+  - Blob store already implements CAS + zstd + AES-256-GCM with BS2 streaming; acceptance tests confirm behavior
+- Decision(s): Proceed to REFACTOR-only follow-ups (docs/runbook polish) unless you prefer adding any extra invariants for GREEN.
+- Follow-ups:
+  - Add/expand operational runbook in crates/blob_store/README.md (key handling, rotation notes, failure modes)
+  - Update Docs/TODO.md to reflect T-6a-E4-BS-06 completion via PR #74 once PR #79 is merged
+
+
 - Date (UTC): 2025-10-28 05:25
 - Area: Observability|Policy|Orchestrator|Docs|CI|Git
 - Context/Goal: Complete T-6a-E2-OBS-09 (Audit + metrics for governance) by executing the standard end-of-task workflow steps 9–17: squash-merge PR #78 to main, close Issue #77, clean branches, sync main, re-run validations, and update documentation.
