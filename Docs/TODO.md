@@ -204,7 +204,7 @@ The following tasks are the highest-priority items from Phase 6a. See the Phase 
 
 ### Enhancement 4 — Multimodal (E4)
 #### crates/blob_store (new)
-- [ ] T-6a-E4-BS-06 — CAS + zstd + encryption — AC: as Quick Start; Deps: T-6a-E1-EL-01; Effort: 3d; Affected: crates/blob_store; Tests: unit+property; Docs: runbook; Risk: High; Rollback: read-only.
+- [x] T-6a-E4-BS-06 — CAS + zstd + encryption — AC: as Quick Start; Deps: T-6a-E1-EL-01; Effort: 3d; Affected: crates/blob_store; Tests: unit+property; Docs: runbook; Risk: High; Rollback: read-only. (Delivered via PR #74; acceptance tests added via PR #79)
 - [x] T-6a-E4-BS-07 — Blob Store: Streaming IO + memory bounds — AC: streamed put/get with deterministic digest; memory ≤32 MiB during 1 GiB put/get (manual test); preserve legacy read path; OTel metrics intact; Tests: property+golden+cleanup regression; Docs: streaming notes. (Closed by PR #74, commit fd4fd37)
 
 - [x] T-6a-E4-BS-08 — BS2 read bounds & robustness — AC: enforce header chunk_size; reject oversize clen; no unbounded allocations; typed failures; property tests + docs; Gates: fmt/clippy/tests PASS. (Merged via PR #74)
