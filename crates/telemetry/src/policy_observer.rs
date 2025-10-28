@@ -23,7 +23,16 @@ fn ensure_instruments() -> &'static Instruments {
     })
 }
 
-/// OTel-backed observer for policy decisions.
+/// OpenTelemetry-backed observer for policy decisions.
+///
+/// Emits a counter named `policy.decision.count` with low-cardinality attributes
+/// `{phase, kind, action}` on every decision. When `action == "allow_but_flag"`,
+/// also emits a convenience alias with `action == "flag"` to simplify dashboarding.
+///
+/// Notes
+/// - Uses the global meter provider; if no exporter is installed, this is a no-op.
+/// - Non-blocking and cheap; safe to call on every decision.
+/// - Attribute values are short enumerations by design to comply with observability.md.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OtelPolicyObserver;
 
@@ -54,7 +63,18 @@ impl policy::PolicyObserver for OtelPolicyObserver {
     }
 }
 
-/// Return an observer instance. Prefer a new value instead of &'static for simplicity.
+/// Create an observer instance and ensure instruments are initialized.
+///
+/// This returns a lightweight value; using it without initializing an OTLP exporter
+/// is safe (metrics will be dropped by the no-op meter provider).
+///
+/// Example
+///
+/// ```rust,ignore
+/// use orca_policy as policy;
+/// // Feature `otel` must be enabled on the `telemetry` crate
+/// policy::set_observer(Some(Box::new(telemetry::policy_observer::global())));
+/// ```
 pub fn global() -> OtelPolicyObserver {
     let _ = ensure_instruments();
     OtelPolicyObserver

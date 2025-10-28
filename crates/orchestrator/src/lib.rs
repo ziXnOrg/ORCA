@@ -188,6 +188,14 @@ impl OrchestratorService {
             .map_err(|e| Status::internal(format!("policy load failed: {}", e)))
     }
 
+    /// Append a policy audit record to the WAL.
+    ///
+    /// Emits an audit event only when the policy intervenes (deny, modify, or allow_but_flag).
+    /// The `reason` field is sanitized via `redact_pii_reason()` before being recorded to avoid
+    /// leaking PII in durable logs. All attributes are low-cardinality to comply with observability rules.
+    ///
+    /// Event payload fields include: `event`, `phase`, `run_id`, `workflow_id`, `envelope_id`,
+    /// `agent`, `kind`, `trace_id`, `rule_name`, `action`, `reason`, and `outcome`.
     fn append_policy_audit(
         &self,
         phase: &str,
@@ -243,6 +251,12 @@ impl OrchestratorService {
     }
 }
 
+/// Redact common PII patterns from an audit `reason` string.
+///
+/// Currently replaces SSN-like substrings of the form `###-##-####` with `[REDACTED]`.
+/// This routine is fast and deterministic and does not attempt exhaustive PII detection;
+/// higher-level classifiers should enforce broader redaction policies. Non-matching text
+/// is preserved verbatim.
 fn redact_pii_reason(input: &str) -> String {
     // Minimal SSN-like pattern redaction (###-##-####)
     let bytes = input.as_bytes();

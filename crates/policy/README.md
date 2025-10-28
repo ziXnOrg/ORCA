@@ -45,7 +45,7 @@ OTel integration
 
 ````rust
 // In tests/binaries with telemetry feature enabled
-let _ = policy::set_observer(Some(Box::new(telemetry::policy_observer::global())));
+policy::set_observer(Some(Box::new(telemetry::policy_observer::global())));
 // Spans emitted by the orchestrator include low-cardinality attributes:
 // phase, decision_kind, rule_name
 // Metrics: counter "policy.decision.count" with attributes {phase, kind, action}
