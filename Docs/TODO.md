@@ -21,7 +21,7 @@ The following tasks are the highest-priority items from Phase 6a. See the Phase 
 2. T-6a-E1-ORCH-02 — Virtual Time service (Clock trait) + injection (see Phase 6a)
 3. [x] T-6a-E3-PH-03 — Wasmtime runner skeleton + hostcalls (see Phase 6a)
 4. [x] T-6a-E3-SEC-04 — Plugin manifest verification (Sigstore/Cosign) (see Phase 6a) — Merged via PR #63
-5. T-6a-E2-POL-05 — Governance baseline (deny-on-error, taxonomy, ordering) (see Phase 6a)
+5. [x] T-6a-E2-POL-05 — Governance baseline (deny-on-error, taxonomy, ordering) (see Phase 6a) — Merged via PR #76
 6. T-6a-E4-BS-06 — Blob Store MVP (CAS + zstd + enc-at-rest) (see Phase 6a)
 7. T-6a-E4-ORCH-07 — Envelope attachments + BlobRef in WAL (see Phase 6a)
 8. T-6a-E4-SEC-08 — Antivirus + EXIF scrub gates (see Phase 6a)
@@ -173,7 +173,7 @@ The following tasks are the highest-priority items from Phase 6a. See the Phase 
 
 ### Enhancement 2 — Ethical Governance (E2)
 #### crates/policy
-- [ ] T-6a-E2-POL-05 — Baseline enforcement + taxonomy — AC: as in Quick Start; Deps: T-6a-E1-EL-01; Effort: 3d; Affected: crates/policy; Tests: unit+integration; Docs: admin; Risk: Med; Rollback: flag.
+- [x] T-6a-E2-POL-05 — Baseline enforcement + taxonomy — AC: as in Quick Start; Deps: T-6a-E1-EL-01; Effort: 3d; Affected: crates/policy; Tests: unit+integration; Docs: admin; Risk: Med; Rollback: flag.
 - [ ] T-6a-E2-RET-14 — Retention defaults + per-tenant overrides — AC: prod 14d full; dev/stage 30d; hash-only 12m; PHI/SECRETS hash-only default; perf budgets; Deps: T-6a-E2-POL-05; Effort: 1.5d; Affected: crates/policy, config; Tests: unit+property; Docs: retention; Risk: Med; Rollback: extend only.
   - [ ] Framework: ToT (policy modeling + precedence, fail-closed)
   - [ ] Context Retrieval

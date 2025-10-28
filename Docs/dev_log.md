@@ -1,3 +1,25 @@
+- Date (UTC): 2025-10-28 03:31
+- Area: Policy
+- Context/Goal: Complete T-6a-E2-POL-05 (Governance baseline) by merging observability + audit hooks with deterministic ordering and deny-on-error posture; finalize docs and close out the task.
+- Actions:
+  - Squash-merged PR #76 to main (commit 86ab6badf6e9d6a65375b6d818b7015d2581f87b)
+  - Deleted branch feat/governance-baseline (remote+local), synced main
+  - Added crates/policy/README.md with PolicyObserver/policy_metrics examples
+  - Expanded rustdoc for PolicyObserver, set_observer, PolicyMetrics/policy_metrics, AuditSink/install_audit_sink
+  - Validations on main: cargo test/clippy/fmt
+- Results:
+  - Tests: PASS (workspace, all-features; doc-tests included)
+  - Clippy: PASS (-D warnings)
+  - Fmt: PASS
+  - Merge SHA: 86ab6badf6e9d6a65375b6d818b7015d2581f87b
+- Diagnostics:
+  - Acceptance criteria satisfied: deterministic precedence (priority → most-restrictive → first-match), deny-on-error, low-cardinality metrics policy.decision.count{phase,kind,action} (alias flag for allow_but_flag), per-decision audit records
+- Decision(s): Task closed; governance baseline in place with observability and audit. Proceed to next NOT_STARTED task per Docs/TODO.md.
+- Follow-ups:
+  - Consider dashboards for policy metrics; integrate with broader observability (E2-OBS-09)
+  - Evaluate adapter parity tasks dependent on governance baseline
+
+
 - Date (UTC): 2025-10-28 00:44
   Area: Policy
   Context/Goal: GREEN phase for T-6a-E2-POL-05 governance baseline — add observability hooks and audit sink; make RED tests pass.
