@@ -1,3 +1,21 @@
+- Date (UTC): 2025-10-28 05:25
+- Area: Observability|Policy|Orchestrator|Docs|CI|Git
+- Context/Goal: Complete T-6a-E2-OBS-09 (Audit + metrics for governance) by executing the standard end-of-task workflow steps 9–17: squash-merge PR #78 to main, close Issue #77, clean branches, sync main, re-run validations, and update documentation.
+- Actions:
+  - Verified PR #78 CI status: build-test (ubuntu/macos), coverage, otel-and-replay — all SUCCESS
+  - Squash-merged PR #78 → main with title "feat(policy,orchestrator,telemetry): audit + metrics for governance (T-6a-E2-OBS-09)" and message "Closes #77"; recorded merge SHA
+  - Closed Issue #77 with final comment and validation evidence; deleted branch feat/governance-observability (remote+local); synced local main (fast-forward)
+  - Ran validations on main: `cargo fmt --all -- --check`; `cargo clippy --workspace --all-features -- -D warnings`; `cargo test --workspace --all-features -- --nocapture`
+  - Updated Docs/TODO.md to mark T-6a-E2-OBS-09 complete in Quick Start and Phase 6a; appended this dev-log entry
+- Results:
+  - Main at merge commit: ded55570f83dce42a09293ea9996b8e5587c3afd; all validations PASS on main
+  - Issue #77: CLOSED; PR #78: MERGED (squash)
+- Diagnostics:
+  - Observability compliance affirmed: span `agent.policy.check` with low-cardinality attrs {phase, decision_kind, rule_name}; metric `policy.decision.count` attrs {phase, kind, action} with alias emission allow_but_flag→flag; WAL audit reasons sanitized (SSN-like) before persistence
+- Decision(s): Accept OTel observer + PII-redaction approach; no follow-ups required
+- Follow-ups: None
+
+
 - Date (UTC): 2025-10-28 03:31
 - Date (UTC): 2025-10-28 04:42
 - Area: Observability|Policy|Orchestrator

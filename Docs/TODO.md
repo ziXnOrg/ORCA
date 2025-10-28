@@ -25,7 +25,7 @@ The following tasks are the highest-priority items from Phase 6a. See the Phase 
 6. T-6a-E4-BS-06 — Blob Store MVP (CAS + zstd + enc-at-rest) (see Phase 6a)
 7. T-6a-E4-ORCH-07 — Envelope attachments + BlobRef in WAL (see Phase 6a)
 8. T-6a-E4-SEC-08 — Antivirus + EXIF scrub gates (see Phase 6a)
-9. T-6a-E2-OBS-09 — Audit + metrics for governance (see Phase 6a)
+9. [x] T-6a-E2-OBS-09 — Audit + metrics for governance (see Phase 6a) — Merged via PR #78
 10. T-6a-SDK-10 — SDK Artifact API skeleton (Py/TS) (see Phase 6a)
 
 ---
@@ -200,7 +200,7 @@ The following tasks are the highest-priority items from Phase 6a. See the Phase 
   - [ ] Artifacts & Repro: retention.yaml examples; golden plan JSON; purge simulator script
   - [ ] Rules referenced: security-privacy.md; agentic-architecture.md; testing-validation.md; rust-standards.md
 #### observability
-- [ ] T-6a-E2-OBS-09 — Audit + metrics — AC: as Quick Start; Deps: T-6a-E2-POL-05; Effort: 1.5d; Affected: crates/policy; Tests: unit; Docs: dashboards; Risk: Low; Rollback: metrics-only.
+- [x] T-6a-E2-OBS-09 — Audit + metrics — AC: as Quick Start; Deps: T-6a-E2-POL-05; Effort: 1.5d; Affected: crates/policy; Tests: unit; Docs: dashboards; Risk: Low; Rollback: metrics-only. — Merged via PR #78
 
 ### Enhancement 4 — Multimodal (E4)
 #### crates/blob_store (new)
