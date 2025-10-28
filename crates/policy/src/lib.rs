@@ -21,6 +21,12 @@
 //!    - Still tied: first-match-wins (stable file order)
 //!
 //! All evaluations are designed to be deterministic for a given policy and input.
+//!
+//! Observability and audit:
+//! - Every decision emits a low-cardinality counter `policy.decision.count{phase,kind,action}`.
+//! - The special action `allow_but_flag` also increments an alias with `action="flag"` for ease of querying.
+//! - An optional `PolicyObserver` can be installed to observe decisions in-process.
+//! - A process-global `AuditSink` captures `AuditRecord`s for later inspection in tests.
 
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
@@ -59,7 +65,25 @@ pub struct Decision {
     pub action: Option<String>,
 }
 
-/// Observer for policy decisions to support metrics/audit integration.
+/// Observer invoked for each policy decision emitted by the engine.
+///
+/// Install an implementation via [`set_observer()`] to receive callbacks across all
+/// evaluation phases. Implementations must be cheap and non-blocking; avoid I/O on
+/// hot paths. This hook is primarily intended for tests and in-process metrics.
+///
+/// Example
+/// ```
+/// struct Capture;
+/// impl policy::PolicyObserver for Capture {
+///     fn on_decision(&self, phase: &str, d: &policy::Decision) {
+///         assert!(matches!(phase, "pre_start_run"|"pre_submit_task"|"post_submit_task"));
+///         let _ = &d.kind; // observe decision
+///     }
+/// }
+/// policy::set_observer(Some(Box::new(Capture)));
+/// // ... perform evaluations via Engine ... then clear when no longer needed:
+/// policy::set_observer(None);
+/// ```
 pub trait PolicyObserver: Send + Sync {
     /// Called on every decision with the evaluation phase.
     fn on_decision(&self, phase: &str, decision: &Decision);
@@ -68,13 +92,28 @@ pub trait PolicyObserver: Send + Sync {
 static OBSERVER: OnceLock<RwLock<Option<Arc<dyn PolicyObserver>>>> = OnceLock::new();
 
 /// Install or clear the global policy observer used by this crate.
+///
+/// Passing `Some(Box::new(obs))` installs the observer; passing `None` clears it.
+///
+/// Example
+/// ```
+/// struct Nop;
+/// impl policy::PolicyObserver for Nop {
+///     fn on_decision(&self, _: &str, _: &policy::Decision) {}
+/// }
+/// policy::set_observer(Some(Box::new(Nop)));
+/// policy::set_observer(None);
+/// ```
 pub fn set_observer(observer: Option<Box<dyn PolicyObserver>>) {
     let cell = OBSERVER.get_or_init(|| RwLock::new(None));
     let mut w = cell.write().expect("observer write lock poisoned");
     *w = observer.map(Arc::from);
 }
 
-/// In-process metrics for policy decisions (low cardinality, test-friendly).
+/// In-process counters for policy decisions keyed by `{phase, kind, action}`.
+///
+/// Low-cardinality by construction; intended for tests and local observability. Not
+/// persisted across process restarts.
 #[derive(Default)]
 pub struct PolicyMetrics {
     inner: Arc<Mutex<HashMap<String, u64>>>,
@@ -95,6 +134,13 @@ impl PolicyMetrics {
 static METRICS: OnceLock<PolicyMetrics> = OnceLock::new();
 
 /// Access the global policy metrics registry.
+///
+/// Example
+/// ```
+/// let m = policy::policy_metrics();
+/// let c = m.decision_counter("pre_submit_task", "deny", "deny");
+/// let _ = c; // inspect or compare as needed
+/// ```
 pub fn policy_metrics() -> &'static PolicyMetrics {
     METRICS.get_or_init(PolicyMetrics::default)
 }
@@ -114,7 +160,7 @@ pub struct AuditRecord {
     pub reason: Option<String>,
 }
 
-/// Handle for draining captured audit records.
+/// Handle for draining captured audit records. Cheap to clone; thread-safe.
 #[derive(Clone)]
 pub struct AuditSink {
     inner: Arc<Mutex<Vec<AuditRecord>>>,
@@ -131,6 +177,13 @@ impl AuditSink {
 static AUDIT: OnceLock<AuditSink> = OnceLock::new();
 
 /// Install (or retrieve) the process-global audit sink.
+///
+/// Example
+/// ```
+/// let sink = policy::install_audit_sink();
+/// assert!(sink.drain().is_empty());
+/// // After evaluations, records will be available via `drain()`.
+/// ```
 pub fn install_audit_sink() -> AuditSink {
     if let Some(s) = AUDIT.get() {
         return s.clone();
