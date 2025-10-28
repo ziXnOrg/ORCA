@@ -1,3 +1,22 @@
+- Date (UTC): 2025-10-28 00:09
+- Area: Policy|Tests|Docs|Git
+- Context/Goal: Kick off T-6a-E2-POL-05 (Governance baseline) via TDD RED phase: add failing acceptance tests, open branch/issue/PR.
+- Actions:
+  - Created branch feat/governance-baseline from main
+  - Added RED tests: crates/policy/tests/governance_baseline_red.rs covering precedence, deny-on-error, allowlist, observability (metrics), and audit events
+  - Ran: cargo test -p policy -- --nocapture (expected RED compile errors)
+  - Pushed branch; opened Issue #75 and Draft PR #76 (Refs #75)
+- Results:
+  - cargo test -p policy: FAIL as expected; missing APIs in policy crate reported by rustc
+    - E0405: trait PolicyObserver not found; E0425: set_observer/policy_metrics/install_audit_sink not found
+  - Branch: origin/feat/governance-baseline; Issue #75 open; PR #76 open (draft)
+- Diagnostics:
+  - Observability (metrics) and audit hooks are not yet exposed by policy; will be added in GREEN via minimal, fail-closed wiring and low-cardinality metrics (policy.decision.count)
+- Decision(s): Proceed to GREEN phase to implement observer/metrics/audit wiring and satisfy tests while maintaining deterministic precedence and deny-on-error posture.
+- Follow-ups:
+  - Implement GREEN per AC; keep clippy -D warnings and coverage ≥90% for core policy logic; document precedence in rustdoc
+
+
 - Date (UTC): 2025-10-27 07:02
 - Date (UTC): 2025-10-27 23:54
 - Area: Storage|CI|Docs
