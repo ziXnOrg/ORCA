@@ -1,4 +1,24 @@
 - Date (UTC): 2025-10-28 03:31
+- Date (UTC): 2025-10-28 04:42
+- Area: Observability|Policy|Orchestrator
+- Context/Goal: GREEN phase for T-6a-E2-OBS-09 (Audit + metrics for governance) — wire OTel-backed policy observer, enrich policy spans, and ensure PII redaction in WAL audit path.
+- Actions:
+  - Implemented telemetry::policy_observer (OTel) with counter "policy.decision.count" and attributes {phase, kind, action}
+  - Recorded decision_kind and rule_name on agent.policy.check spans in orchestrator; added PII redaction helper for audit.reason
+  - Fixed tests: separate engines to avoid precedence interaction in RED test; YAML quoting bug in audit reason
+  - Ran validations: cargo fmt --all; cargo clippy --workspace --all-features -D warnings; cargo test --workspace --all-features -- --nocapture
+- Results:
+  - All tests PASS (workspace + doctests); clippy/fmt PASS
+  - New files: crates/telemetry/src/policy_observer.rs; README note in crates/policy/README.md about OTel integration
+- Diagnostics:
+  - Naive rule matching means deny ToolInvocation matches unconditionally; use separate engines in tests to avoid Deny dominating Allow-by-flag
+  - Avoid initializing OTLP pipeline implicitly in tests (requires tokio runtime); rely on global no-op meter when exporter not configured
+- Decision(s): Proceed to REFACTOR (docs polish, attribute names settled: decision_kind, rule_name); keep observer optional and fail-closed by default.
+- Follow-ups:
+  - Update PR #78 body with AC mapping and validation evidence; mark Ready for Review
+  - If approved, squash-merge, close Issue #77, clean branch, sync main, re-run validations, update TODO.md
+
+
 - Area: Policy
 - Context/Goal: Complete T-6a-E2-POL-05 (Governance baseline) by merging observability + audit hooks with deterministic ordering and deny-on-error posture; finalize docs and close out the task.
 - Actions:
