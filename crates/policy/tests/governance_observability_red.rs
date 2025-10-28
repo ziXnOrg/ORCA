@@ -7,7 +7,7 @@ use serde_json::json;
 #[test]
 fn otel_metrics_export_with_attributes() {
     // Install OTel-backed observer (does not exist yet → compile error for RED phase)
-    let _ = policy::set_observer(Some(Box::new(telemetry::policy_observer::global())));
+    policy::set_observer(Some(Box::new(telemetry::policy_observer::global())));
 
     // Drive a couple of decisions so that metrics would be emitted once GREEN is implemented
     // Use separate engines to avoid precedence interactions between deny and allow_but_flag.
