@@ -1,3 +1,27 @@
+- Date (UTC): 2025-10-28 18:32
+- Area: WAL|Architecture|Security
+- Context/Goal: RESEARCH for T-6a-E4-ORCH-07 (Attachments + BlobRef in WAL). Establish a secure, deterministic metadata schema and ordering for artifact references in the WAL; define limits, observability, and performance posture before RED.
+- Actions:
+  - Web sources (authoritative): RFC 8785 — JSON Canonicalization Scheme (https://www.rfc-editor.org/rfc/rfc8785.html); OWASP Logging Cheat Sheet (https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html); NIST SP 800-122 — PII Confidentiality (https://csrc.nist.gov/pubs/sp/800/122/final); Git Internals — content-addressable objects (https://git-scm.com/book/en/v2/Git-Internals-Git-Objects); SQLite WAL design/perf notes (https://sqlite.org/wal.html)
+  - Codebase review: event_log v2 schema/types and golden tests; orchestrator event emission (start_run, task_enqueued, usage_update); blob_store Digest/BS2 and path layout; prior enhancement spec notes for BlobRef/ArtifactMeta.
+- Results:
+  - Store only metadata in WAL (references, never payloads). Minimum fields: digest (sha256 hex), size_bytes, mime; optional encoding (e.g., "base64"), compression hint ("zstd").
+  - Determinism: typed structs (no maps) + explicit field order; sort attachments by digest (lexicographic) before serialization; optional JCS (RFC 8785) evaluated but not required if struct ordering stays stable.
+  - Security: forbid PII/secrets in metadata (OWASP/NIST guidance); validate digest length/charset; cap attachments per record (≤ 8); cap string lengths (mime/encoding ≤ 128 bytes). Fail-closed on violations.
+  - Performance: WAL entry + attachments metadata must remain small (target ≤ 10 KiB/record). Budget ≤ 3% p95 overhead vs no-attachments path; keep single fsync policy unchanged.
+  - Observability: add low-cardinality metrics (wal.attach.count, wal.attach.bytes) and tracing attributes; avoid high-cardinality (no filenames, no user-provided labels).
+  - Compatibility: attachments field optional; readers tolerant to absence; rollback plan is to strip the field (and ignore on read).
+- Decisions:
+  - Schema: add `attachments: [Attachment]` to WAL v2 Record immediately after `payload` and before `metadata` (normative field order update; golden files to follow). Attachment struct uses stable ordering and exact key names: `digest_sha256`, `size_bytes`, `mime`, `encoding` (optional), `compression` ("zstd"|"none").
+  - Ordering: before serialization, sort attachments by `digest_sha256`.
+  - Limits: enforce at write-time: count≤8, size_bytes ≤ 1 TiB sanity cap, each string ≤128 bytes, total serialized attachments ≤ 8 KiB.
+  - Orchestrator: emit attachments metadata (if present) and ensure raw payload bodies are not embedded in WAL.
+- Follow-ups:
+  - RED: add failing tests: event_log golden with attachments; orchestrator integration test asserting attachments emitted and payload bodies redacted; error tests (invalid digest/oversized metadata/missing blobs).
+  - GREEN: minimal schema/types + deterministic ordering; orchestrator wiring; update Docs/schemas/v2.md; targeted metrics.
+  - PRE-REFACTOR RESEARCH: optimization/edge cases (CAS), security advisories, observability best practices.
+  - REFACTOR: harden limits and docs; validate perf gates; finalize rollback notes.
+
 - Date (UTC): 2025-10-28 17:34
 - Area: Storage|Docs|CI|Git
 - Context/Goal: Complete T-6a-E4-BS-06 REFACTOR — expand operational runbook, validate quality gates, mark task complete, and execute standard end-of-task workflow (merge PR #79, close Issue #80, branch cleanup, sync main).
