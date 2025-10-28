@@ -20,6 +20,7 @@ opentelemetry_sdk = { version = "0.22", optional = true, features = ["rt-tokio"]
 opentelemetry-otlp = { version = "0.15", optional = true, features = ["http-proto", "metrics", "reqwest-client"] }
 once_cell = { version = "1", optional = true }
 blob_store = { path = "../blob_store", optional = true }
+policy = { path = "../policy", optional = true }
 
 [features]
 # JSON logging is always on; enable "otel" to wire OTel metrics/tracer providers (no tracing layer hookup yet).
@@ -29,6 +30,7 @@ otel = [
   "opentelemetry-otlp",
   "once_cell",
   "blob_store",
+  "policy",
 ]
 opentelemetry-otlp = ["dep:opentelemetry-otlp"]
 

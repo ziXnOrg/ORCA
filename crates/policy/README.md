@@ -40,6 +40,18 @@ assert!(records.iter().all(|r| !r.phase.is_empty()));
 policy::set_observer(None);
 ```
 
+OTel integration
+- For OTLP export, install the OTel-backed observer from the telemetry crate:
+
+````rust
+// In tests/binaries with telemetry feature enabled
+policy::set_observer(Some(Box::new(telemetry::policy_observer::global())));
+// Spans emitted by the orchestrator include low-cardinality attributes:
+// phase, decision_kind, rule_name
+// Metrics: counter "policy.decision.count" with attributes {phase, kind, action}
+````
+
+
 Notes
 - The special action `allow_but_flag` also increments a `flag` alias for convenience
   when querying metrics.

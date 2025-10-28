@@ -14,3 +14,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 regex = "1"
 serde_yaml = "0.9"
+
+
+[dev-dependencies]
+telemetry = { path = "../telemetry", features = ["otel"] }
+serde_json = "1"
