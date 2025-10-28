@@ -62,7 +62,10 @@ fn encryption_at_rest_ciphertext_properties() -> Result<()> {
     let path = store1.path_for(&d.to_hex());
     let bytes = fs::read(&path)?;
     assert!(bytes.starts_with(b"BS2\0"), "missing BS2 header");
-    assert!(!bytes.windows(8).any(|w| w == &data[..8]), "ciphertext should not contain plaintext sequences");
+    assert!(
+        !bytes.windows(8).any(|w| w == &data[..8]),
+        "ciphertext should not contain plaintext sequences"
+    );
 
     // Stable ciphertext for same input/key across puts
     let d2 = store2.put(&data)?;
@@ -84,13 +87,18 @@ fn error_cases_missing_and_corrupted() -> Result<()> {
 
     // Missing
     let missing = BlobStore::<DevKeyProvider>::digest_of(b"does-not-exist");
-    match store.get(&missing) { Err(Error::NotFound) => {}, other => panic!("expected NotFound, got {other:?}") }
+    match store.get(&missing) {
+        Err(Error::NotFound) => {}
+        other => panic!("expected NotFound, got {other:?}"),
+    }
 
     // Corrupted (flip a byte)
     let d = store.put(&deterministic_bytes(16 * 1024))?;
     let path = store.path_for(&d.to_hex());
     let mut c = fs::read(&path)?;
-    let mid = c.len()/2; c[mid] ^= 0x5A; fs::write(&path, &c)?;
+    let mid = c.len() / 2;
+    c[mid] ^= 0x5A;
+    fs::write(&path, &c)?;
     let e = store.get(&d).unwrap_err();
     let s = format!("{e}");
     assert!(s.contains("integrity") || s.contains("crypto"));
@@ -111,4 +119,3 @@ fn streaming_compatibility_digest_and_round_trip() -> Result<()> {
     assert_eq!(got, data);
     Ok(())
 }
-

@@ -102,3 +102,42 @@ let digest = store.put_reader(reader)?; // memory remains O(chunk_size)
 ---
 For details, see inline rustdoc in `src/lib.rs`.
 
+
+
+## Operational Runbook
+
+### Key handling best practices
+- DevKeyProvider is for local/dev only. For production, implement `KeyProvider` backed by a secure KMS/HSM or sealed key store.
+- Keys must be 32-byte AES-256-GCM keys; zeroize in memory when possible and avoid logging or serializing.
+- Scope keys per tenant or security domain to bound blast radius; rotate keys periodically.
+
+### Key rotation and migration strategy
+- New writes should switch to a new key version K_{n+1} while reads continue to support K_n.
+- Store only digests on references; the blob store derives nonces deterministically from (key,digest) without persisting nonces.
+- Rotation options:
+  - Lazy migration: decrypt with old key on read, re-encrypt on write/update path.
+  - Bulk migration: offline job reads → decrypts with K_n → re-encrypts with K_{n+1} (verify digest invariant).
+- Keep a short list of active keys in your `KeyProvider` and fail-closed if no key can decrypt.
+
+### Failure modes and recovery
+- Partial writes: crashes leave `*.incomplete` temp files; call `cleanup_incomplete()` periodically or at startup.
+- Corruption: AEAD integrity failures or BS2 header/clen bound violations return `Error::Integrity`.
+- Wrong key: returns `Error::WrongKey` (or `Integrity` depending on failure stage) — never log secrets.
+- Missing blobs: `Error::NotFound` — callers may choose to re-materialize from source or mark reference invalid.
+- Atomicity: writes are fsync'ed then atomically renamed; treat `AlreadyExists` on rename as success if the final path exists.
+
+### Determinism guarantees
+- Plaintext digest: SHA-256 over uncompressed bytes; stable across hosts.
+- Compression: fixed zstd level (default: 3) for deterministic compressed output.
+- Nonces: deterministic derivation `prefix = SHA256(key || digest)[..12]`, per-chunk `nonce = prefix[..8] || counter_be32`.
+- With same input and key, ciphertext is stable; integrity verified by AEAD tags and final plaintext digest.
+
+### Compatibility notes
+- BS2 is the default write format: `magic="BS2\0"`, `version=1`, `chunk_size: u32`.
+- Legacy fallback: blobs without the BS2 header are treated as a single-shot AEAD over the full compressed stream for reads only.
+- New writes always produce BS2; keep read-path legacy fallback to preserve backward compatibility.
+
+### Performance characteristics
+- Bounded memory: working set is O(chunk_size) for put/get (default ~64 KiB); no unbounded allocations on control paths.
+- Streaming behavior: large blobs are compressed to a temp file, then encrypted and chunked during finalize; reads stream decrypt+decompress per chunk.
+- Robustness: read path enforces header-declared `chunk_size` and rejects any chunk length > `chunk_size + AEAD_TAG_SIZE`.
