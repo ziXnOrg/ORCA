@@ -1,3 +1,38 @@
+- Date (UTC): 2025-10-29 04:55
+- Area: Orchestrator|Proxy|Security|Observability
+- Context/Goal: RESEARCH — T-6a-E1-PROXY-11 (HTTP/gRPC capture skeleton) to design safe, deterministic external I/O capture with redaction and low overhead.
+- Actions (Research & Codebase context):
+  - Patterns: Tonic gRPC interceptors and Tower Layer middleware; Envoy HTTP/gRPC filter semantics for capture points
+  - Security: OWASP SSRF prevention and request smuggling guidance; OWASP Logging best practices
+  - Logging/NIST: NIST SP 800-92 guidance for security log management
+  - Observability: OpenTelemetry semantic conventions for HTTP and gRPC (low-cardinality attrs)
+  - Determinism: RFC 8785 JSON Canonicalization; VirtualClock integration points confirmed; WAL v2 extension plan formed (ExternalIOStarted/Finished)
+  - Codebase: Located orchestrator gRPC service (tonic server/client), policy redaction hooks, WAL v2 schema and serializer; confirmed process_clock() usage for deterministic timestamps
+- Key Sources (citations):
+  - Tonic Interceptor docs: https://docs.rs/tonic/latest/tonic/service/interceptor/index.html
+  - Tower Layer docs: https://docs.rs/tower/latest/tower/trait.Layer.html
+  - Envoy HTTP filters: https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/http_filters
+  - OWASP SSRF Prevention: https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
+  - OWASP Request Smuggling: https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/07-Input_Validation_Testing/15-Testing_for_HTTP_Splitting_Smuggling
+  - OWASP Logging Cheat Sheet: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
+  - NIST SP 800-92: https://csrc.nist.gov/pubs/sp/800/92/final
+  - OTel HTTP semconv: https://opentelemetry.io/docs/specs/semconv/http/
+  - OTel gRPC semconv: https://opentelemetry.io/docs/specs/semconv/rpc/grpc/
+  - RFC 8785 (JCS): https://www.rfc-editor.org/rfc/rfc8785.html
+- Findings:
+  - Interception: Use Tonic Interceptor for gRPC metadata/body capture; Tower Layer for HTTP paths (if/when HTTP clients exist); keep capture minimal and deterministic; avoid high-cardinality attrs.
+  - Security posture: Deny-on-error; header allowlist + redaction map; prevent SSRF via scheme/host allowlist; guard against request smuggling by normalizing and validating hop-by-hop headers.
+  - Observability: Use OTel semconv keys: http.method, http.target, server.address/client.address, rpc.system="grpc", rpc.service, rpc.method; ensure low-cardinality.
+  - Determinism: Timestamps via VirtualClock; canonical ordering of captured headers; record digests for bodies; attachments reserved for CAS refs only.
+  - WAL v2: Add ExternalIOStarted/ExternalIOFinished (typed payloads) with minimal fields: system ("http"|"grpc"), direction (client/server), target (host:port, scheme), method/name, request_id, status (finished), duration_ms, redaction_profile, error taxonomy.
+  - Performance: Budget ≤2 ms p95 added RTT overhead; ≤5% CPU; memory ≤8 MiB per in-flight op; measure via integration tests with mock server and simple histogram.
+- Decisions:
+  - Implement as feature-gated proxy capture with bypass_to_direct default OFF; explicit flag to enable; fail-closed on capture serialization errors.
+  - Start with client-side gRPC interceptor; stub HTTP capture layer for future use; emit WAL stubs only (no payload embedding).
+- Next Steps:
+  - RED: add failing tests under crates/orchestrator/tests/proxy_* covering redaction config application, WAL ExternalIO* serialization stubs, and perf budget scaffolding (no heavy bench in CI).
+  - Update Issue #11 with RESEARCH summary and branch link; create branch feat/external-io-proxy and proceed with TDD.
+
 ### 2025-10-29 04:10 (UTC)
 
 #### Area
