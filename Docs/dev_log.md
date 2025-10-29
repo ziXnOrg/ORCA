@@ -1,3 +1,165 @@
+- Date (UTC): 2025-10-29 09:35
+- Area: Orchestrator|Proxy|Performance|Docs
+- Context/Goal: REFACTOR — T-6a-E1-PROXY-11 finalize with E2E microbenchmark (capture ON vs OFF) and document perf; keep CI gates green.
+- Actions:
+  - Added Criterion microbench `crates/orchestrator/benches/capture_overhead.rs` measuring unary StartRun RTT with server-side capture OFF vs ON.
+  - Ran benches: `cargo bench --bench capture_overhead` and `cargo bench --bench sha256_digest`.
+  - Validated gates: `cargo test -p orchestrator -- --nocapture`; `cargo clippy -p orchestrator -p event-log -- -D warnings`; `cargo fmt --all -- --check`.
+- Results:
+  - Capture RTT (Mac dev, release): OFF p50≈51.3 µs; ON p50≈103.5 µs (Δ≈52 µs). p95 within same range. Meets ≤2 ms p95 budget by large margin.
+  - SHA-256 digest 10 MiB: 17.8–18.0 ms (≥560 MB/s), chunk sizes {32/64/128/256 KiB} within noise; 64 KiB kept as default.
+- Diagnostics:
+  - Server-side capture stubs (started/finished events + timing) account for observed overhead; client layer remains a no-op skeleton pending follow-up wiring.
+- Decisions:
+  - Accept current skeleton: budgets met; defer client WAL/metrics emission to follow-up task while preserving fail-closed posture and redaction API.
+- Follow-ups:
+  - Wire client-side ProxyCaptureLayer emission and low-cardinality metrics behind feature flag; add microbench variant measuring client ON vs OFF.
+  - Update Issue #11 with charts and attach bench outputs.
+
+
+- Date (UTC): 2025-10-29 07:20
+- Date (UTC): 2025-10-29 08:20
+- Area: Orchestrator|Proxy|Performance|Observability|Docs
+- Context/Goal: REFACTOR — T-6a-E1-PROXY-11: sha2 streaming digest + client capture layer skeleton + benches; keep CI gates green and document perf.
+- Actions:
+  - Orchestrator deps: added sha2, hex, http.
+  - Implemented `sha256_hex(&[u8])` with 64 KiB chunked streaming (bounded mem; lowercase hex). Replaced server-side stub usage in StartRun/SubmitTask.
+  - Unit test: 6 MiB payload digest matches single-update (`crates/orchestrator/tests/digest_sha256.rs`).
+  - Client-side: added `ProxyCaptureLayer` + `CapturedChannelBuilder` skeleton (Tower Layer around Channel; redaction helper from http::HeaderMap). Currently no-op (dead_code allowed) until wired to WAL/metrics in follow-up.
+  - Benches: `crates/orchestrator/benches/sha256_digest.rs` for sizes {1 KiB, 64 KiB, 1 MiB, 10 MiB} and chunks {32/64/128/256 KiB}. Selected default 64 KiB.
+  - Validations: cargo test -p orchestrator; cargo clippy -p orchestrator -p event-log -D warnings; cargo fmt --all -- --check; cargo bench --bench sha256_digest.
+- Results:
+  - Tests: PASS (incl. new digest test). Clippy: PASS. Fmt: PASS.
+  - Benchmarks (Mac dev, release, single-thread):
+    - sha256_hex_builtin 10 MiB: ~18.24–18.34 ms (≥545 MB/s) — meets ≤40 ms budget.
+    - Chunk scan on 10 MiB: 32/64/128/256 KiB ~17.84–17.98 ms (close; 64 KiB within noise).
+- Diagnostics:
+  - Streaming digest keeps ~64 KiB working set; no unbounded buffers.
+  - Client layer compiled and ready to wire; leaving emission disabled avoids behavioral change until dedicated tests/bench land.
+- Decisions:
+  - Keep 64 KiB chunk as default; revisit if hardware variance appears.
+  - Maintain low-cardinality metrics/attrs per semconv in the follow-up wiring.
+- Follow-ups:
+  - Implement E2E microbenchmark for capture ON vs OFF RTT and verify ≤2 ms p95 delta.
+  - Wire ProxyCaptureLayer emission: WAL ExternalIOStarted/Finished (direction="client"), metrics {orca.proxy.capture.duration_ms, orca.proxy.capture.errors_total}.
+  - Update Issue #11 with perf charts and finalize REFACTOR acceptance.
+
+- Date (UTC): 2025-10-29 07:40
+- Area: Orchestrator|Proxy|Performance|Security|Observability
+- Context/Goal: PERFORMANCE RESEARCH — T-6a-E1-PROXY-11: optimize SHA-256 digesting & capture path; quantify Tower Layer overhead; define budgets and validation.
+- Actions (Research & Plan):
+  - SHA-256 perf: evaluated streaming vs buffered; chunk sizes (32/64/128/256 KiB); SIMD/HW accel context (x86 SHA-NI, ARMv8 Crypto Ext) and library support.
+    - Keep `sha2` (pure Rust, already in workspace). Benchmark chunk sizes; default 64 KiB; avoid extra copies; prefer BufRead-based streaming.
+    - Zero-copy tactic: digest bytes as Prost encodes (future); for now, hash the final bytes with bounded buf.
+  - Tower Layer perf: confirm minimal overhead (axum/tower patterns); plan zero-allocation hot-path where possible; avoid string formatting; pre-allocate JSON maps only when needed.
+  - gRPC metadata extraction perf: avoid cloning MetadataMap; check only known keys; only build redaction map if sensitive headers present; small-capacity alloc (<=3 entries).
+  - OTel semconv & metrics: map WAL fields to rpc.system/rpc.service/rpc.method/rpc.grpc.status_code; metrics names finalized (see below).
+  - Measurement plan: Criterion benches for digest across sizes; integrate capture-on/off microbench to measure added RTT; memory profiling for bounded heap (optional pprof-rs).
+- Results/Decisions:
+  - Digest: use `sha2` streaming; measure 32/64/128/256 KiB chunks; adopt fastest; default 64 KiB unless data shows otherwise.
+  - Capture layer: implement `ProxyCaptureLayer` around Channel; borrow URI pieces; allocate only at WAL emission; compute request_id with monotonic ids.
+  - Redaction: only construct headers object when any sensitive key present; otherwise omit.
+  - WAL writes: keep JSON construction tight; reuse small strings where feasible; stable field ordering preserved.
+- Performance Budgets (task-specific):
+  - SHA-256 throughput target: digest 10 MiB in ≤40 ms (≈≥250 MB/s) on typical dev hardware (release build, single thread).
+  - Capture overhead: ≤2 ms p95 added RTT for unary RPC under unit load.
+  - Memory: no unbounded growth; max incremental buffering per request ≤64 KiB over payload; zero-copy where feasible.
+- Validation Plan:
+  - Criterion benches: sizes {1 KiB, 64 KiB, 1 MiB, 10 MiB} × chunk {32/64/128/256 KiB}; record best chunk; attach results.
+  - E2E microbench: client→server call with capture on/off; report delta (p50/p95).
+  - Sanity: `cargo clippy -- -D warnings`, `cargo fmt -- --check`, orchestrator tests.
+- Sources:
+  - Tonic method/URL in interceptor limits: https://github.com/hyperium/tonic/issues/300 ; Tower layering patterns (low overhead): https://github.com/hyperium/tonic/discussions/1200 ; Axum/Tower overhead claims: crates.io/crates/axum
+  - OTel RPC attributes/metrics: https://opentelemetry.io/docs/specs/semconv/registry/attributes/rpc/ • https://opentelemetry.io/docs/specs/semconv/rpc/grpc/ • https://opentelemetry.io/docs/specs/semconv/rpc/rpc-metrics/
+  - SHA instruction background: https://stackoverflow.com/questions/20692386/are-there-in-x86-any-instructions-to-accelerate-sha-sha1-2-256-512-encoding ; ring perf anecdote (users.rust-lang.org): https://users.rust-lang.org/t/is-sha256-hashing-in-rust-slower-than-go/99740
+
+
+- Area: Orchestrator|Proxy|Security|Performance|Observability
+- Context/Goal: PRE-REFACTOR RESEARCH — T-6a-E1-PROXY-11: select SHA-256 crate, design client-side Tonic interceptor, align OTel semconv, and define metrics + AC for REFACTOR.
+- Actions (Research & Repo scan):
+  - Digest crates: compared `sha2` (pure Rust) vs `ring` (BoringSSL-derived) for streaming SHA-256; reviewed API ergonomics and maintenance.
+    - Docs: https://docs.rs/sha2/latest/sha2/ • https://briansmith.org/rustdoc/ring/digest/index.html
+  - Tonic interceptor patterns: reviewed interceptor vs Tower Layer trade-offs and method/path extraction limitations.
+    - Tonic issue (method/URL in interceptor): https://github.com/hyperium/tonic/issues/300 • Tower layering: https://github.com/hyperium/tonic/discussions/1200
+  - OTel semconv: gRPC/RPC attributes incl. rpc.system, rpc.service, rpc.method, rpc.grpc.status_code; RPC metrics naming.
+    - RPC attributes: https://opentelemetry.io/docs/specs/semconv/registry/attributes/rpc/ • gRPC: https://opentelemetry.io/docs/specs/semconv/rpc/grpc/ • RPC metrics: https://opentelemetry.io/docs/specs/semconv/rpc/rpc-metrics/
+  - Repo scan:
+    - Existing digest usage: `sha2` already used in crates/plugin_host and crates/blob_store (digest traits + hex encoding); no `ring` dependency present.
+    - Outbound gRPC clients: currently only in tests (OrchestratorClient::connect). No production outbound clients yet; plan a builder/wrapper for future use.
+- Results:
+  - Selected crate: `sha2` for SHA-256 (streaming via Digest/Update, pure Rust, widely used, already a workspace dep; minimal friction; deterministic hex via `hex`).
+  - Deterministic body hashing API plan: streaming digest with bounded memory (64 KiB chunks), lower-case hex; function shape `fn sha256_hex<R: Read>(r: &mut R) -> Result<String>`, fallible to surface IO errors; avoid unbounded buffers.
+  - Client-side capture wiring plan: prefer Tower Layer around `tonic::transport::Channel` for richer access (URI/endpoint) and timing; generate request_id via `orca_core::ids::next_monotonic_id()`; extract method from `Request::uri().path()` (e.g., "/pkg.Svc/Method"); scheme/host/port from Channel Endpoint; emit WAL ExternalIOStarted/Finished with direction="client".
+  - OTel mapping plan (low-cardinality): rpc.system="grpc", rpc.service, rpc.method, network peer attrs; finished maps status to grpc status code; align metric with `rpc.client.duration` histogram semantics where feasible.
+  - Metrics plan: counters `orca.proxy.capture.errors_total`, histograms `orca.proxy.capture.duration_ms` (buckets tuned for sub-10ms to 1s), labels: system, direction, status (capped set), avoiding high-cardinality.
+- Diagnostics:
+  - Interceptor alone is limited for method/URI; Tower Layer provides needed context for outbound capture. No current prod outbound clients, so introduce a client builder that composes Channel + Layer for future sites and tests.
+  - `sha2` consistency across repo reduces supply-chain variance; performance adequate given 64 KiB streaming and typical gRPC payload sizes.
+- Decisions:
+  - Use `sha2` for SHA-256 in REFACTOR; streaming API with 64 KiB buffers; hex lowercase via `hex` crate; deterministic & bounded.
+  - Implement a `ProxyCaptureLayer` (Tower) and `CapturedChannelBuilder` for outbound clients; keep feature-gated and default-off; maintain fail-closed with explicit bypass flag.
+- Follow-ups (AC for REFACTOR):
+  - Implement real SHA-256 streaming; replace stub; add unit test with >5MB payload to verify bounded memory and stable digest.
+  - Add client-side capture Layer + builder; e2e test that emits ExternalIOStarted/Finished (direction="client"); ensure request_id correlation and semconv-aligned fields.
+  - Emit metrics with final names and verify via WAL/telemetry hooks; keep cardinality low; document buckets.
+  - Validate: `cargo test -p orchestrator -- --nocapture`, `cargo clippy -- -D warnings`, `cargo fmt -- --check`; budget check: added overhead ≤2ms p95 under unit load.
+
+
+- Date (UTC): 2025-10-29 06:55
+- Area: Orchestrator|Proxy|EventLog|Security|Observability
+- Context/Goal: GREEN — T-6a-E1-PROXY-11 implement gRPC capture skeleton and WAL ExternalIO events; keep CI gates green.
+- Actions:
+  - event-log v2: Added EventTypeV2::ExternalIoStarted/ExternalIoFinished + payload structs; added golden test and fixture.
+  - orchestrator: server-side capture in StartRun/SubmitTask with redaction map (authorization/cookie/x-api-key→"[REDACTED]"), deterministic request_id, started/finished WAL stubs, basic timing metric.
+  - Fail-closed: deny when capture fails unless ORCA_BYPASS_TO_DIRECT=1; added x-orca-capture-fail request metadata for deterministic test-only injection (avoids env races); env toggles remain supported.
+  - Tests: crates/orchestrator/tests/proxy_grpc_red.rs now GREEN (4/4); event-log golden for ExternalIO passes.
+- Results:
+  - cargo test -p orchestrator --test proxy_grpc_red — PASS (4/4)
+  - cargo test -p event-log — PASS; cargo clippy (orchestrator,event-log) -D warnings — clean; cargo fmt — clean
+- Diagnostics:
+  - Env var mutation across concurrent tests caused nondeterminism; resolved by supporting per-request metadata flag (low-cardinality, test-only) while retaining env-based controls for runtime.
+- Decisions:
+  - Keep body_digest_sha256 as placeholder in GREEN; implement real SHA-256 in REFACTOR (candidate crates: sha2 or ring) with deterministic API and bounded buffering.
+  - Plan client-side interceptor wiring for outbound captures and align attributes with OTel semconv.
+- Follow-ups:
+  - PRE-REFACTOR RESEARCH: select digest crate, finalize client-side interceptor design + AC, define metrics names and caps.
+
+
+- Date (UTC): 2025-10-29 04:55
+- Area: Orchestrator|Proxy|Security|Observability
+- Context/Goal: RESEARCH — T-6a-E1-PROXY-11 (HTTP/gRPC capture skeleton) to design safe, deterministic external I/O capture with redaction and low overhead.
+- Actions (Research & Codebase context):
+  - Patterns: Tonic gRPC interceptors and Tower Layer middleware; Envoy HTTP/gRPC filter semantics for capture points
+  - Security: OWASP SSRF prevention and request smuggling guidance; OWASP Logging best practices
+  - Logging/NIST: NIST SP 800-92 guidance for security log management
+  - Observability: OpenTelemetry semantic conventions for HTTP and gRPC (low-cardinality attrs)
+  - Determinism: RFC 8785 JSON Canonicalization; VirtualClock integration points confirmed; WAL v2 extension plan formed (ExternalIOStarted/Finished)
+  - Codebase: Located orchestrator gRPC service (tonic server/client), policy redaction hooks, WAL v2 schema and serializer; confirmed process_clock() usage for deterministic timestamps
+- Key Sources (citations):
+  - Tonic Interceptor docs: https://docs.rs/tonic/latest/tonic/service/interceptor/index.html
+  - Tower Layer docs: https://docs.rs/tower/latest/tower/trait.Layer.html
+  - Envoy HTTP filters: https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/http_filters
+  - OWASP SSRF Prevention: https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
+  - OWASP Request Smuggling: https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/07-Input_Validation_Testing/15-Testing_for_HTTP_Splitting_Smuggling
+  - OWASP Logging Cheat Sheet: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
+  - NIST SP 800-92: https://csrc.nist.gov/pubs/sp/800/92/final
+  - OTel HTTP semconv: https://opentelemetry.io/docs/specs/semconv/http/
+  - OTel gRPC semconv: https://opentelemetry.io/docs/specs/semconv/rpc/grpc/
+  - RFC 8785 (JCS): https://www.rfc-editor.org/rfc/rfc8785.html
+- Findings:
+  - Interception: Use Tonic Interceptor for gRPC metadata/body capture; Tower Layer for HTTP paths (if/when HTTP clients exist); keep capture minimal and deterministic; avoid high-cardinality attrs.
+  - Security posture: Deny-on-error; header allowlist + redaction map; prevent SSRF via scheme/host allowlist; guard against request smuggling by normalizing and validating hop-by-hop headers.
+  - Observability: Use OTel semconv keys: http.method, http.target, server.address/client.address, rpc.system="grpc", rpc.service, rpc.method; ensure low-cardinality.
+  - Determinism: Timestamps via VirtualClock; canonical ordering of captured headers; record digests for bodies; attachments reserved for CAS refs only.
+  - WAL v2: Add ExternalIOStarted/ExternalIOFinished (typed payloads) with minimal fields: system ("http"|"grpc"), direction (client/server), target (host:port, scheme), method/name, request_id, status (finished), duration_ms, redaction_profile, error taxonomy.
+  - Performance: Budget ≤2 ms p95 added RTT overhead; ≤5% CPU; memory ≤8 MiB per in-flight op; measure via integration tests with mock server and simple histogram.
+- Decisions:
+  - Implement as feature-gated proxy capture with bypass_to_direct default OFF; explicit flag to enable; fail-closed on capture serialization errors.
+  - Start with client-side gRPC interceptor; stub HTTP capture layer for future use; emit WAL stubs only (no payload embedding).
+- Next Steps:
+  - RED: add failing tests under crates/orchestrator/tests/proxy_* covering redaction config application, WAL ExternalIO* serialization stubs, and perf budget scaffolding (no heavy bench in CI).
+  - Update Issue #11 with RESEARCH summary and branch link; create branch feat/external-io-proxy and proceed with TDD.
+
 ### 2025-10-29 04:10 (UTC)
 
 #### Area

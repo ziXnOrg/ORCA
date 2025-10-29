@@ -139,6 +139,8 @@ pub mod v2 {
         StartRun,
         TaskEnqueued,
         UsageUpdate,
+        ExternalIoStarted,
+        ExternalIoFinished,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
@@ -192,6 +194,27 @@ pub mod v2 {
     pub struct UsageUpdatePayload {
         pub tokens: u64,
         pub cost_micros: u64,
+    }
+
+    // External I/O capture payloads
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ExternalIOStartedPayload {
+        pub system: String,    // "grpc" | "http"
+        pub direction: String, // "client" | "server"
+        pub scheme: String,    // e.g., "grpc"
+        pub host: String,
+        pub port: u16,
+        pub method: String,     // rpc.service + "/" + rpc.method
+        pub request_id: String, // deterministic correlation id
+        pub headers: serde_json::Map<String, serde_json::Value>, // redacted map
+        pub body_digest_sha256: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ExternalIOFinishedPayload {
+        pub request_id: String,
+        pub status: String, // e.g., "ok" | grpc status code
+        pub duration_ms: u64,
     }
 
     const ATTACH_MAX_COUNT: usize = 8;
