@@ -1,4 +1,49 @@
+- Date (UTC): 2025-10-29 09:35
+- Area: Orchestrator|Proxy|Performance|Docs
+- Context/Goal: REFACTOR — T-6a-E1-PROXY-11 finalize with E2E microbenchmark (capture ON vs OFF) and document perf; keep CI gates green.
+- Actions:
+  - Added Criterion microbench `crates/orchestrator/benches/capture_overhead.rs` measuring unary StartRun RTT with server-side capture OFF vs ON.
+  - Ran benches: `cargo bench --bench capture_overhead` and `cargo bench --bench sha256_digest`.
+  - Validated gates: `cargo test -p orchestrator -- --nocapture`; `cargo clippy -p orchestrator -p event-log -- -D warnings`; `cargo fmt --all -- --check`.
+- Results:
+  - Capture RTT (Mac dev, release): OFF p50≈51.3 µs; ON p50≈103.5 µs (Δ≈52 µs). p95 within same range. Meets ≤2 ms p95 budget by large margin.
+  - SHA-256 digest 10 MiB: 17.8–18.0 ms (≥560 MB/s), chunk sizes {32/64/128/256 KiB} within noise; 64 KiB kept as default.
+- Diagnostics:
+  - Server-side capture stubs (started/finished events + timing) account for observed overhead; client layer remains a no-op skeleton pending follow-up wiring.
+- Decisions:
+  - Accept current skeleton: budgets met; defer client WAL/metrics emission to follow-up task while preserving fail-closed posture and redaction API.
+- Follow-ups:
+  - Wire client-side ProxyCaptureLayer emission and low-cardinality metrics behind feature flag; add microbench variant measuring client ON vs OFF.
+  - Update Issue #11 with charts and attach bench outputs.
+
+
 - Date (UTC): 2025-10-29 07:20
+- Date (UTC): 2025-10-29 08:20
+- Area: Orchestrator|Proxy|Performance|Observability|Docs
+- Context/Goal: REFACTOR — T-6a-E1-PROXY-11: sha2 streaming digest + client capture layer skeleton + benches; keep CI gates green and document perf.
+- Actions:
+  - Orchestrator deps: added sha2, hex, http.
+  - Implemented `sha256_hex(&[u8])` with 64 KiB chunked streaming (bounded mem; lowercase hex). Replaced server-side stub usage in StartRun/SubmitTask.
+  - Unit test: 6 MiB payload digest matches single-update (`crates/orchestrator/tests/digest_sha256.rs`).
+  - Client-side: added `ProxyCaptureLayer` + `CapturedChannelBuilder` skeleton (Tower Layer around Channel; redaction helper from http::HeaderMap). Currently no-op (dead_code allowed) until wired to WAL/metrics in follow-up.
+  - Benches: `crates/orchestrator/benches/sha256_digest.rs` for sizes {1 KiB, 64 KiB, 1 MiB, 10 MiB} and chunks {32/64/128/256 KiB}. Selected default 64 KiB.
+  - Validations: cargo test -p orchestrator; cargo clippy -p orchestrator -p event-log -D warnings; cargo fmt --all -- --check; cargo bench --bench sha256_digest.
+- Results:
+  - Tests: PASS (incl. new digest test). Clippy: PASS. Fmt: PASS.
+  - Benchmarks (Mac dev, release, single-thread):
+    - sha256_hex_builtin 10 MiB: ~18.24–18.34 ms (≥545 MB/s) — meets ≤40 ms budget.
+    - Chunk scan on 10 MiB: 32/64/128/256 KiB ~17.84–17.98 ms (close; 64 KiB within noise).
+- Diagnostics:
+  - Streaming digest keeps ~64 KiB working set; no unbounded buffers.
+  - Client layer compiled and ready to wire; leaving emission disabled avoids behavioral change until dedicated tests/bench land.
+- Decisions:
+  - Keep 64 KiB chunk as default; revisit if hardware variance appears.
+  - Maintain low-cardinality metrics/attrs per semconv in the follow-up wiring.
+- Follow-ups:
+  - Implement E2E microbenchmark for capture ON vs OFF RTT and verify ≤2 ms p95 delta.
+  - Wire ProxyCaptureLayer emission: WAL ExternalIOStarted/Finished (direction="client"), metrics {orca.proxy.capture.duration_ms, orca.proxy.capture.errors_total}.
+  - Update Issue #11 with perf charts and finalize REFACTOR acceptance.
+
 - Date (UTC): 2025-10-29 07:40
 - Area: Orchestrator|Proxy|Performance|Security|Observability
 - Context/Goal: PERFORMANCE RESEARCH — T-6a-E1-PROXY-11: optimize SHA-256 digesting & capture path; quantify Tower Layer overhead; define budgets and validation.

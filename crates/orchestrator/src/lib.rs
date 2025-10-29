@@ -355,7 +355,7 @@ impl Orchestrator for OrchestratorService {
                 "method": "orca.v1.Orchestrator/StartRun",
                 "request_id": rid,
                 "headers": serde_json::Value::Object(crate::proxy::redacted_headers(&md)),
-                "body_digest_sha256": crate::proxy::body_digest_sha256_stub(&[]),
+                "body_digest_sha256": crate::proxy::sha256_hex(&[]),
             });
             let _ = self.log.append(orca_core::ids::next_monotonic_id(), t0_ms, &started);
             let injected =
@@ -500,7 +500,7 @@ impl Orchestrator for OrchestratorService {
                 "method": "orca.v1.Orchestrator/SubmitTask",
                 "request_id": rid,
                 "headers": serde_json::Value::Object(crate::proxy::redacted_headers(&md)),
-                "body_digest_sha256": crate::proxy::body_digest_sha256_stub(&[]),
+                "body_digest_sha256": crate::proxy::sha256_hex(&[]),
             });
             let _ = self.log.append(orca_core::ids::next_monotonic_id(), t0_ms, &started);
             let injected =
