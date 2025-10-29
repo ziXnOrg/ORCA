@@ -2,11 +2,12 @@
 //! These tests intentionally fail until the capture skeleton is implemented.
 
 use event_log::{EventRecord, JsonlEventLog};
+use futures_util::StreamExt;
 use orchestrator::orca_v1::{orchestrator_client::OrchestratorClient, *};
 use orchestrator::OrchestratorService;
 use serde_json::Value as JsonValue;
 use tokio::net::TcpListener;
-use tonic::{metadata::MetadataValue, transport::Server, Status};
+use tonic::{metadata::MetadataValue, transport::Server};
 
 async fn spawn_server() -> (String, tokio::task::JoinHandle<()>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
@@ -51,29 +52,32 @@ fn test_env_envelope(id: &str) -> Envelope {
 async fn wal_stubs_emitted_for_grpc_capture_red() {
     // Enable capture (flag will be wired in GREEN)
     std::env::set_var("ORCA_CAPTURE_EXTERNAL_IO", "1");
+    // Ensure no failure injection is present from other tests
+    std::env::remove_var("ORCA_CAPTURE_FAIL_INJECT");
+    std::env::remove_var("ORCA_BYPASS_TO_DIRECT");
 
     let (addr, _h, dir) = spawn_server().await;
     let mut client = OrchestratorClient::connect(addr).await.unwrap();
 
     // Include an Authorization header to validate redaction later
-    let mut md = tonic::metadata::MetadataMap::new();
-    md.insert(
-        "authorization",
-        MetadataValue::try_from("Bearer secret-token").unwrap(),
-    );
+    let mut req = tonic::Request::new(StartRunRequest {
+        workflow_id: "wf1".into(),
+        initial_task: Some(test_env_envelope("t1")),
+        budget: None,
+    });
+    req.metadata_mut()
+        .insert("authorization", MetadataValue::try_from("Bearer secret-token").unwrap());
 
     // StartRun + SubmitTask to generate at least some WAL traffic
-    let _ = client
-        .start_run(StartRunRequest { workflow_id: "wf1".into(), initial_task: Some(test_env_envelope("t1")), budget: None })
-        .await
-        .unwrap()
-        .into_inner();
+    let _ = client.start_run(req).await.unwrap().into_inner();
 
-    let _ = client
-        .submit_task(SubmitTaskRequest { run_id: "wf1".into(), task: Some(test_env_envelope("t2")) })
-        .await
-        .unwrap()
-        .into_inner();
+    let mut req2 = tonic::Request::new(SubmitTaskRequest {
+        run_id: "wf1".into(),
+        task: Some(test_env_envelope("t2")),
+    });
+    req2.metadata_mut()
+        .insert("authorization", MetadataValue::try_from("Bearer secret-token").unwrap());
+    let _ = client.submit_task(req2).await.unwrap().into_inner();
 
     // Read WAL and assert external io capture stubs exist
     let log = JsonlEventLog::open(dir.path().join("it.jsonl")).unwrap();
@@ -81,21 +85,27 @@ async fn wal_stubs_emitted_for_grpc_capture_red() {
 
     let started: Vec<_> = recs
         .iter()
-        .filter_map(|r| r.payload.get("event").and_then(|v| v.as_str()).filter(|e| *e == "external_io_started").map(|_| &r.payload))
+        .filter_map(|r| {
+            r.payload
+                .get("event")
+                .and_then(|v| v.as_str())
+                .filter(|e| *e == "external_io_started")
+                .map(|_| &r.payload)
+        })
         .collect();
-    assert!(
-        !started.is_empty(),
-        "expected at least one external_io_started event in WAL (RED)"
-    );
+    assert!(!started.is_empty(), "expected at least one external_io_started event in WAL (RED)");
 
     let finished: Vec<_> = recs
         .iter()
-        .filter_map(|r| r.payload.get("event").and_then(|v| v.as_str()).filter(|e| *e == "external_io_finished").map(|_| &r.payload))
+        .filter_map(|r| {
+            r.payload
+                .get("event")
+                .and_then(|v| v.as_str())
+                .filter(|e| *e == "external_io_finished")
+                .map(|_| &r.payload)
+        })
         .collect();
-    assert!(
-        !finished.is_empty(),
-        "expected at least one external_io_finished event in WAL (RED)"
-    );
+    assert!(!finished.is_empty(), "expected at least one external_io_finished event in WAL (RED)");
 
     // Correlate by request_id and check required fields (these structures will be implemented in GREEN)
     let req_id = started[0].get("request_id").and_then(|v| v.as_str()).expect("request_id field");
@@ -116,57 +126,68 @@ async fn wal_stubs_emitted_for_grpc_capture_red() {
 #[tokio::test]
 async fn redaction_is_applied_red() {
     std::env::set_var("ORCA_CAPTURE_EXTERNAL_IO", "1");
+    std::env::remove_var("ORCA_CAPTURE_FAIL_INJECT");
+    std::env::remove_var("ORCA_BYPASS_TO_DIRECT");
     let (addr, _h, dir) = spawn_server().await;
     let mut client = OrchestratorClient::connect(addr).await.unwrap();
 
     // Call that should be captured; include sensitive header to test redaction
-    let _ = client
-        .start_run(StartRunRequest { workflow_id: "wf2".into(), initial_task: Some(test_env_envelope("t10")), budget: None })
-        .await
-        .unwrap();
+    let mut req = tonic::Request::new(StartRunRequest {
+        workflow_id: "wf2".into(),
+        initial_task: Some(test_env_envelope("t10")),
+        budget: None,
+    });
+    req.metadata_mut()
+        .insert("authorization", MetadataValue::try_from("Bearer secret-token").unwrap());
+    let _ = client.start_run(req).await.unwrap();
 
     let log = JsonlEventLog::open(dir.path().join("it.jsonl")).unwrap();
     let recs: Vec<EventRecord<JsonValue>> = log.read_range(0, u64::MAX).unwrap();
     let started = recs
         .iter()
-        .filter_map(|r| r.payload.get("event").and_then(|v| v.as_str()).filter(|e| *e == "external_io_started").map(|_| &r.payload))
+        .filter_map(|r| {
+            r.payload
+                .get("event")
+                .and_then(|v| v.as_str())
+                .filter(|e| *e == "external_io_started")
+                .map(|_| &r.payload)
+        })
         .next()
         .expect("expected an external_io_started event (RED)");
 
     // Expect header redaction and body digest instead of raw content
     let headers = started.get("headers").and_then(|v| v.as_object()).expect("headers object");
-    assert_eq!(
-        headers.get("authorization").and_then(|v| v.as_str()),
-        Some("[REDACTED]")
-    );
+    assert_eq!(headers.get("authorization").and_then(|v| v.as_str()), Some("[REDACTED]"));
     assert!(started.get("body").is_none(), "raw body must not be recorded");
-    assert!(
-        started.get("body_digest_sha256").is_some(),
-        "body_digest_sha256 must be present"
-    );
+    assert!(started.get("body_digest_sha256").is_some(), "body_digest_sha256 must be present");
 }
 
 #[tokio::test]
 async fn fail_closed_on_capture_error_red() {
     // Inject a capture failure; by default requests should be denied (bypass only when explicitly enabled)
     std::env::set_var("ORCA_CAPTURE_EXTERNAL_IO", "1");
-    std::env::set_var("ORCA_CAPTURE_FAIL_INJECT", "1");
+    std::env::remove_var("ORCA_CAPTURE_FAIL_INJECT");
 
     let (addr, _h, _dir) = spawn_server().await;
     let mut client = OrchestratorClient::connect(addr).await.unwrap();
 
-    let res = client
-        .submit_task(SubmitTaskRequest { run_id: "wf3".into(), task: Some(test_env_envelope("t20")) })
-        .await;
+    let mut req = tonic::Request::new(SubmitTaskRequest {
+        run_id: "wf3".into(),
+        task: Some(test_env_envelope("t20")),
+    });
+    req.metadata_mut().insert("x-orca-capture-fail", MetadataValue::try_from("1").unwrap());
+    let res = client.submit_task(req).await;
 
     // RED: until implemented, this likely returns Ok; we expect Err to enforce fail-closed
     assert!(res.is_err(), "capture failure should deny the request (RED)");
 
     // And with bypass_to_direct=true it should proceed (GREEN will wire the flag)
-    std::env::remove_var("ORCA_CAPTURE_FAIL_INJECT");
     std::env::set_var("ORCA_BYPASS_TO_DIRECT", "1");
     let ok = client
-        .submit_task(SubmitTaskRequest { run_id: "wf3".into(), task: Some(test_env_envelope("t21")) })
+        .submit_task(SubmitTaskRequest {
+            run_id: "wf3".into(),
+            task: Some(test_env_envelope("t21")),
+        })
         .await;
     assert!(ok.is_ok(), "bypass_to_direct=true should allow request to proceed (RED)");
 }
@@ -174,12 +195,17 @@ async fn fail_closed_on_capture_error_red() {
 #[tokio::test]
 async fn perf_scaffolding_metrics_red() {
     std::env::set_var("ORCA_CAPTURE_EXTERNAL_IO", "1");
+    std::env::remove_var("ORCA_CAPTURE_FAIL_INJECT");
+    std::env::remove_var("ORCA_BYPASS_TO_DIRECT");
     let (addr, _h, dir) = spawn_server().await;
     let mut client = OrchestratorClient::connect(addr).await.unwrap();
 
     let t0 = std::time::Instant::now();
     let _ = client
-        .submit_task(SubmitTaskRequest { run_id: "wf4".into(), task: Some(test_env_envelope("t30")) })
+        .submit_task(SubmitTaskRequest {
+            run_id: "wf4".into(),
+            task: Some(test_env_envelope("t30")),
+        })
         .await
         .unwrap();
     let _elapsed_ms = t0.elapsed().as_millis() as u64;
@@ -190,12 +216,13 @@ async fn perf_scaffolding_metrics_red() {
     // Assert at least one timing metric related to proxy/capture was emitted (name TBD in GREEN)
     let metrics_count = recs
         .iter()
-        .filter(|r| r
-            .payload
-            .get("metric")
-            .and_then(|v| v.as_str())
-            .map(|m| m.contains("proxy") || m.contains("capture")).unwrap_or(false))
+        .filter(|r| {
+            r.payload
+                .get("metric")
+                .and_then(|v| v.as_str())
+                .map(|m| m.contains("proxy") || m.contains("capture"))
+                .unwrap_or(false)
+        })
         .count();
     assert!(metrics_count > 0, "expected capture-related timing metric in WAL or telemetry (RED)");
 }
-

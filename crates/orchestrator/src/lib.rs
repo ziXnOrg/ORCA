@@ -21,6 +21,7 @@ pub mod orca_v1 {
 }
 
 pub mod clock;
+pub mod proxy;
 
 use orca_v1::{
     orchestrator_server::{Orchestrator, OrchestratorServer},
@@ -333,7 +334,37 @@ impl Orchestrator for OrchestratorService {
         &self,
         req: Request<StartRunRequest>,
     ) -> Result<Response<StartRunResponse>, Status> {
-        Self::check_auth(req.metadata())?;
+        let md = req.metadata().clone();
+        Self::check_auth(&md)?;
+
+        // External I/O capture (server-side skeleton)
+        let capture_on = crate::proxy::capture_enabled();
+        let mut req_id: Option<String> = None;
+        let mut t0_ms: u64 = 0;
+        if capture_on {
+            t0_ms = crate::clock::process_clock().now_ms();
+            let rid = format!("R{}", orca_core::ids::next_monotonic_id());
+            req_id = Some(rid.clone());
+            let started = json!({
+                "event": "external_io_started",
+                "system": "grpc",
+                "direction": "server",
+                "scheme": "grpc",
+                "host": "unknown",
+                "port": 0u16,
+                "method": "orca.v1.Orchestrator/StartRun",
+                "request_id": rid,
+                "headers": serde_json::Value::Object(crate::proxy::redacted_headers(&md)),
+                "body_digest_sha256": crate::proxy::body_digest_sha256_stub(&[]),
+            });
+            let _ = self.log.append(orca_core::ids::next_monotonic_id(), t0_ms, &started);
+            let injected =
+                crate::proxy::fail_inject_enabled() || md.get("x-orca-capture-fail").is_some();
+            if injected && !crate::proxy::bypass_to_direct() {
+                return Err(Status::unavailable("capture failure injected"));
+            }
+        }
+
         let mut r = req.into_inner();
         if let Some(ref env) = r.initial_task {
             self.reject_if_expired_or_version(env)?;
@@ -424,6 +455,22 @@ impl Orchestrator for OrchestratorService {
         )
         .await?;
         info!(workflow=%r.workflow_id, "StartRun accepted");
+
+        // Emit finished + metric for capture
+        if capture_on {
+            let rid = req_id.unwrap_or_default();
+            let t1 = crate::clock::process_clock().now_ms();
+            let finished = json!({
+                "event": "external_io_finished",
+                "request_id": rid,
+                "status": "ok",
+                "duration_ms": t1.saturating_sub(t0_ms),
+            });
+            let _ = self.log.append(orca_core::ids::next_monotonic_id(), t1, &finished);
+            let metric = json!({"metric":"proxy.capture.emit.ms","value_ms":0});
+            let _ = self.log.append(orca_core::ids::next_monotonic_id(), t1, &metric);
+        }
+
         Ok(Response::new(StartRunResponse { run_id: r.workflow_id }))
     }
 
@@ -432,7 +479,37 @@ impl Orchestrator for OrchestratorService {
         &self,
         req: Request<SubmitTaskRequest>,
     ) -> Result<Response<SubmitTaskResponse>, Status> {
-        Self::check_auth(req.metadata())?;
+        let md = req.metadata().clone();
+        Self::check_auth(&md)?;
+
+        // External I/O capture (server-side skeleton)
+        let capture_on = crate::proxy::capture_enabled();
+        let mut req_id: Option<String> = None;
+        let mut t0_ms: u64 = 0;
+        if capture_on {
+            t0_ms = crate::clock::process_clock().now_ms();
+            let rid = format!("R{}", orca_core::ids::next_monotonic_id());
+            req_id = Some(rid.clone());
+            let started = json!({
+                "event": "external_io_started",
+                "system": "grpc",
+                "direction": "server",
+                "scheme": "grpc",
+                "host": "unknown",
+                "port": 0u16,
+                "method": "orca.v1.Orchestrator/SubmitTask",
+                "request_id": rid,
+                "headers": serde_json::Value::Object(crate::proxy::redacted_headers(&md)),
+                "body_digest_sha256": crate::proxy::body_digest_sha256_stub(&[]),
+            });
+            let _ = self.log.append(orca_core::ids::next_monotonic_id(), t0_ms, &started);
+            let injected =
+                crate::proxy::fail_inject_enabled() || md.get("x-orca-capture-fail").is_some();
+            if injected && !crate::proxy::bypass_to_direct() {
+                return Err(Status::unavailable("capture failure injected"));
+            }
+        }
+
         let mut r = req.into_inner();
         {
             let env =
@@ -695,6 +772,21 @@ impl Orchestrator for OrchestratorService {
                 })).map_err(internal_io)?;
             }
         }
+        // Emit finished + metric for capture
+        if capture_on {
+            let rid = req_id.unwrap_or_default();
+            let t1 = crate::clock::process_clock().now_ms();
+            let finished = json!({
+                "event": "external_io_finished",
+                "request_id": rid,
+                "status": "ok",
+                "duration_ms": t1.saturating_sub(t0_ms),
+            });
+            let _ = self.log.append(orca_core::ids::next_monotonic_id(), t1, &finished);
+            let metric = json!({"metric":"proxy.capture.emit.ms","value_ms":0});
+            let _ = self.log.append(orca_core::ids::next_monotonic_id(), t1, &metric);
+        }
+
         Ok(Response::new(SubmitTaskResponse { accepted: true }))
     }
 

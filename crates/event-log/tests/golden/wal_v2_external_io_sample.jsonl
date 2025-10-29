@@ -1,0 +1,3 @@
+{"id":10,"ts_ms":2000,"version":2,"event_type":"external_io_started","run_id":"R2","trace_id":"T2","payload":{"system":"grpc","direction":"client","scheme":"grpc","host":"example.com","port":443,"method":"orca.v1.Orchestrator/StartRun","request_id":"REQ1","headers":{"authorization":"[REDACTED]"},"body_digest_sha256":"0000000000000000000000000000000000000000000000000000000000000000"},"metadata":{}}
+{"id":11,"ts_ms":2003,"version":2,"event_type":"external_io_finished","run_id":"R2","trace_id":"T2","payload":{"request_id":"REQ1","status":"ok","duration_ms":3},"metadata":{}}
+
