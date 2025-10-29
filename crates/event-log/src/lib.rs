@@ -18,6 +18,8 @@ pub enum EventLogError {
     Io(#[from] std::io::Error),
     #[error("serialize: {0}")]
     Serde(#[from] serde_json::Error),
+    #[error("invalid: {0}")]
+    Invalid(String),
 }
 
 /// Minimal event record persisted to the log.
@@ -139,6 +141,27 @@ pub mod v2 {
         UsageUpdate,
     }
 
+    #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+    pub struct Attachment {
+        pub digest_sha256: String,
+        pub size_bytes: u64,
+        pub mime: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub encoding: Option<String>,
+        pub compression: String, // "zstd" | "none"
+    }
+
+    impl Ord for Attachment {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            self.digest_sha256.cmp(&other.digest_sha256)
+        }
+    }
+    impl PartialOrd for Attachment {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct RecordV2<T> {
         pub id: super::EventId,
@@ -148,6 +171,8 @@ pub mod v2 {
         pub run_id: String,
         pub trace_id: String,
         pub payload: T,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub attachments: Option<Vec<Attachment>>, // new field; serialized after payload
         pub metadata: Value,
     }
 
@@ -169,9 +194,77 @@ pub mod v2 {
         pub cost_micros: u64,
     }
 
-    /// Serialize a V2 record to a JSON line with stable field ordering.
+    const ATTACH_MAX_COUNT: usize = 8;
+    const STR_MAX_LEN: usize = 128;
+    const TOTAL_ATTACH_JSON_MAX: usize = 8 * 1024; // bytes
+
+    fn is_hex_sha256(s: &str) -> bool {
+        s.len() == 64 && s.as_bytes().iter().all(|b| b.is_ascii_hexdigit())
+    }
+
+    /// Serialize a V2 record to a JSON line with stable field ordering and deterministic attachment ordering.
     pub fn to_jsonl_line<T: Serialize>(rec: &RecordV2<T>) -> Result<String, super::EventLogError> {
-        let s = serde_json::to_string(rec)?;
+        // Validate + sort attachments deterministically by digest
+        let mut sorted: Option<Vec<Attachment>> = None;
+        if let Some(att) = &rec.attachments {
+            if att.len() > ATTACH_MAX_COUNT {
+                return Err(super::EventLogError::Invalid(format!(
+                    "attachments count {} exceeds max {}",
+                    att.len(),
+                    ATTACH_MAX_COUNT
+                )));
+            }
+            let mut a = att.clone();
+            for x in &a {
+                if !is_hex_sha256(&x.digest_sha256) {
+                    return Err(super::EventLogError::Invalid("invalid digest".into()));
+                }
+                if x.mime.len() > STR_MAX_LEN
+                    || x.encoding.as_deref().map(|e| e.len()).unwrap_or(0) > STR_MAX_LEN
+                    || x.compression.len() > STR_MAX_LEN
+                {
+                    return Err(super::EventLogError::Invalid(
+                        "oversized attachment string field".into(),
+                    ));
+                }
+            }
+            a.sort();
+            // Rough size cap via JSON length of attachments only
+            let approx = serde_json::to_string(&a).map_err(super::EventLogError::Serde)?.len();
+            if approx > TOTAL_ATTACH_JSON_MAX {
+                return Err(super::EventLogError::Invalid("attachments too large".into()));
+            }
+            sorted = Some(a);
+        }
+
+        // Build a serialization wrapper to control field order explicitly.
+        #[derive(Serialize)]
+        struct RecordV2Ser<'a, T: Serialize> {
+            id: super::EventId,
+            ts_ms: u64,
+            version: u8,
+            event_type: &'a EventTypeV2,
+            run_id: &'a str,
+            trace_id: &'a str,
+            payload: &'a T,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            attachments: Option<&'a [Attachment]>,
+            metadata: &'a Value,
+        }
+
+        let ser = RecordV2Ser {
+            id: rec.id,
+            ts_ms: rec.ts_ms,
+            version: rec.version,
+            event_type: &rec.event_type,
+            run_id: &rec.run_id,
+            trace_id: &rec.trace_id,
+            payload: &rec.payload,
+            attachments: sorted.as_deref(),
+            metadata: &rec.metadata,
+        };
+
+        let s = serde_json::to_string(&ser)?;
         Ok(s)
     }
 }
