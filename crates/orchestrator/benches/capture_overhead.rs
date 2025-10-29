@@ -93,5 +93,63 @@ fn bench_capture_overhead(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_capture_overhead);
+fn bench_client_capture_overhead(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let (addr, _dir) = start_server(&rt, false);
+    let endpoint = format!("http://{}", addr);
+
+    // Base channel shared across benches
+    let channel = rt.block_on(async { Channel::from_shared(endpoint).unwrap().connect().await.unwrap() });
+
+    // Client OFF (no ProxyCaptureLayer)
+    c.bench_function("grpc_client_round_trip_off", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let fut = async {
+                    let mut client = OrchestratorClient::new(channel.clone());
+                    let _ = client
+                        .start_run(StartRunRequest {
+                            workflow_id: "wf".into(),
+                            initial_task: None,
+                            budget: None,
+                        })
+                        .await
+                        .unwrap();
+                };
+                let start = std::time::Instant::now();
+                rt.block_on(fut);
+                total += start.elapsed();
+            }
+            total
+        })
+    });
+
+    // Client ON (with ProxyCaptureLayer) — RED: placeholder (same as OFF until wired)
+    c.bench_function("grpc_client_round_trip_on", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let fut = async {
+                    // TODO(GREEN): wrap `channel` with ProxyCaptureLayer once wired
+                    let mut client = OrchestratorClient::new(channel.clone());
+                    let _ = client
+                        .start_run(StartRunRequest {
+                            workflow_id: "wf".into(),
+                            initial_task: None,
+                            budget: None,
+                        })
+                        .await
+                        .unwrap();
+                };
+                let start = std::time::Instant::now();
+                rt.block_on(fut);
+                total += start.elapsed();
+            }
+            total
+        })
+    });
+}
+
+criterion_group!(benches, bench_capture_overhead, bench_client_capture_overhead);
 criterion_main!(benches);
