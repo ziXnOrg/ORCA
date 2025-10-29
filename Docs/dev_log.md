@@ -1,3 +1,18 @@
+- Date (UTC): 2025-10-29 03:41
+- Area: WAL|Orchestrator|Docs
+- Context/Goal: RED phase for T-6a-E4-ORCH-07 — add failing tests for WAL attachments + BlobRef and open draft PR/Issue.
+- Actions:
+  - Created branch `feat/wal-attachments`; added tests:
+    - event-log: wal_v2_attachments_golden.rs + golden JSONL; wal_attachments_errors_red.rs.
+    - orchestrator: attachments_integration.rs (expects attachments array in emitted record).
+  - Opened Issue #81 and draft PR #82 (RED). Ran targeted package tests.
+- Results:
+  - `cargo test -p orchestrator -p event-log` → compile errors as expected (Attachment type/attachments field missing): E0422 (Attachment not found), E0560 (RecordV2 has no field `attachments`).
+  - Failing count: 2 test targets blocked at compile; orchestrator tests not executed due to event-log compile errors.
+- Diagnostics: RED correctly pinpoints minimal compile-time API surface needed in event_log v2 (Attachment type, attachments field in RecordV2, deterministic ordering) and orchestrator wiring to include attachments.
+- Decision(s): proceed to GREEN to implement minimal types/fields + deterministic sort, then wire orchestrator to surface attachments without payload bodies.
+- Follow-ups: GREEN implementation; update Docs/schemas/v2.md and golden fixtures; add low-cardinality metrics.
+
 - Date (UTC): 2025-10-28 18:32
 - Area: WAL|Architecture|Security
 - Context/Goal: RESEARCH for T-6a-E4-ORCH-07 (Attachments + BlobRef in WAL). Establish a secure, deterministic metadata schema and ordering for artifact references in the WAL; define limits, observability, and performance posture before RED.
