@@ -1,137 +1,314 @@
-- Date (UTC): 2025-10-28 17:34
-- Area: Storage|Docs|CI|Git
-- Context/Goal: Complete T-6a-E4-BS-06 REFACTOR — expand operational runbook, validate quality gates, mark task complete, and execute standard end-of-task workflow (merge PR #79, close Issue #80, branch cleanup, sync main).
-- Actions:
-  - Expanded crates/blob_store/README.md with operational runbook (key handling, rotation/migration, failure modes, determinism, compatibility, performance)
-  - Updated Docs/TODO.md to mark T-6a-E4-BS-06 as complete with PR cross-references
-  - Ran quality gates: cargo fmt --all -- --check; cargo clippy --workspace --all-features -- -D warnings; cargo test --workspace --all-features -- --nocapture (local)
-  - Marked PR #79 Ready for Review and squash-merged to main with message closing Issue #80; deleted feature branch (remote+local); synced main
-- Results:
-  - Merge commit on main: f3f1d526b949c7c761a15990478a85dd99b5143c (squash of PR #79)
-  - Validations on main: fmt PASS; clippy PASS; tests PASS
-- Diagnostics:
-  - Blob Store MVP functionality shipped earlier via PR #74 (BS-07/08); PR #79 adds formal acceptance tests and documentation
-- Decision(s): Task T-6a-E4-BS-06 closed; proceed to next Phase 6a NOT_STARTED candidate per TODO.
-- Follow-ups: None
+### 2025-10-29 04:10 (UTC)
+
+#### Area
+WAL|Orchestrator|Security|Determinism|Docs
+
+#### Context/Goal
+RESEARCH + PRE-REFACTOR for T-6a-E4-ORCH-07 (Attachments + BlobRef in WAL). Validate best practices and security/determinism requirements; deduplicate attachment extraction; confirm acceptance criteria and run validations.
+
+#### Actions
+- Targeted research (sources cited):
+  - RFC 8785 JSON Canonicalization Scheme (deterministic JSON): https://www.rfc-editor.org/rfc/rfc8785
+  - OWASP Logging Cheat Sheet (PII redaction, low-cardinality): https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
+  - NIST SP 800-92 Log Management: https://csrc.nist.gov/publications/detail/sp/800-92/final
+  - NIST SP 800-57 Key Management (rotation context): https://csrc.nist.gov/projects/key-management
+  - FIPS 180-4 SHA-256 standard (CAS digest): https://csrc.nist.gov/publications/detail/fips/180/4/final
+  - Event Sourcing versioning (Fowler): https://martinfowler.com/eaaDev/EventSourcing.html
+  - Event versioning notes (Greg Young): https://leanpub.com/esversioning/read
+  - OpenTelemetry semantic conventions (cardinality): https://opentelemetry.io/docs/specs/semconv/general/attribute-requirements/
+- Refined AC (no PII in metadata; bounded sizes; deterministic field ordering; stable attachments sorting; graceful readers on missing attachments; rollback path to strip attachments).
+- REFACTOR prep: extracted duplicate blob_ref parsing into helpers in orchestrator:
+  - extract_attachments_from_payload(&str) -> Option<Value>
+  - extract_attachments_from_env(&Value) -> Option<Value>
+- Replaced duplicated logic in submit_task and policy audit; removed unused import in attachments_integration.rs.
+- Ran validations: cargo fmt, clippy -D warnings, full workspace tests.
+
+#### Results
+- fmt/clippy/tests: PASS across workspace.
+- Golden tests (wal_v2_attachments_golden) pass; error-path test (invalid digest) passes; orchestrator attachments integration passes.
+- Determinism: stable v2 serializer ordering; attachments presence verified; no payload bytes embedded in WAL.
+
+#### Diagnostics
+- Duplication removed; attach extraction centralized. EventLog v2 serializer enforces stable key order and (if multiple) attachment sorting—future-proofed by sorting policy.
+- Security posture: metadata-only (digest/size/mime/compression), no PII, redaction hooks preserved, bounded allocations.
+
+#### Decisions
+- Keep orchestrator-supplied compression field = "none" (Blob Store owns compression). Maintain single-attachment path now; if multi-attachment appears, sort by digest_sha256 before serialization (already enforced in v2 path).
+
+#### Follow-ups
+- Consider multi-attachment property test and explicit attachments.count metric (low-cardinality).
+- Document rollback/strip behavior in event_log README and TODO.
 
 
-- Date (UTC): 2025-10-28 08:15
-- Area: Storage|Tests|Docs|Git
-- Context/Goal: Kick off T-6a-E4-BS-06 (Blob Store MVP: CAS + zstd + encryption) via TDD RED phase, add acceptance tests, push branch, open draft PR/Issue.
-- Actions:
-  - Created branch feat/blob-store-mvp from main
-  - Added acceptance tests in crates/blob_store/tests/mvp_red.rs covering CAS, zstd ratio + round-trip, encryption-at-rest (deterministic ciphertext; wrong-key/tamper), errors, and streaming compatibility
-  - Ran: cargo test -p blob_store --test mvp_red -- --nocapture (tests PASS; implementation already meets AC)
-  - Pushed branch and opened Draft PR #79; created Issue #80 to track task
-- Results:
-  - Tests: PASS (5/5) — RED passed immediately; crate already satisfies MVP AC
-  - Branch: origin/feat/blob-store-mvp; PR #79 (draft) open; Issue #80 open
-- Diagnostics:
-  - Blob store already implements CAS + zstd + AES-256-GCM with BS2 streaming; acceptance tests confirm behavior
-- Decision(s): Proceed to REFACTOR-only follow-ups (docs/runbook polish) unless you prefer adding any extra invariants for GREEN.
-- Follow-ups:
-  - Add/expand operational runbook in crates/blob_store/README.md (key handling, rotation notes, failure modes)
-  - Update Docs/TODO.md to reflect T-6a-E4-BS-06 completion via PR #74 once PR #79 is merged
+//! Write-ahead event log prototype API (Phase 0).
 
+#![deny(unsafe_code)]
 
-- Date (UTC): 2025-10-28 05:25
-- Area: Observability|Policy|Orchestrator|Docs|CI|Git
-- Context/Goal: Complete T-6a-E2-OBS-09 (Audit + metrics for governance) by executing the standard end-of-task workflow steps 9–17: squash-merge PR #78 to main, close Issue #77, clean branches, sync main, re-run validations, and update documentation.
-- Actions:
-  - Verified PR #78 CI status: build-test (ubuntu/macos), coverage, otel-and-replay — all SUCCESS
-  - Squash-merged PR #78 → main with title "feat(policy,orchestrator,telemetry): audit + metrics for governance (T-6a-E2-OBS-09)" and message "Closes #77"; recorded merge SHA
-  - Closed Issue #77 with final comment and validation evidence; deleted branch feat/governance-observability (remote+local); synced local main (fast-forward)
-  - Ran validations on main: `cargo fmt --all -- --check`; `cargo clippy --workspace --all-features -- -D warnings`; `cargo test --workspace --all-features -- --nocapture`
-  - Updated Docs/TODO.md to mark T-6a-E2-OBS-09 complete in Quick Start and Phase 6a; appended this dev-log entry
-- Results:
-  - Main at merge commit: ded55570f83dce42a09293ea9996b8e5587c3afd; all validations PASS on main
-  - Issue #77: CLOSED; PR #78: MERGED (squash)
-- Diagnostics:
-  - Observability compliance affirmed: span `agent.policy.check` with low-cardinality attrs {phase, decision_kind, rule_name}; metric `policy.decision.count` attrs {phase, kind, action} with alias emission allow_but_flag→flag; WAL audit reasons sanitized (SSN-like) before persistence
-- Decision(s): Accept OTel observer + PII-redaction approach; no follow-ups required
-- Follow-ups: None
+use serde::{Deserialize, Serialize};
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
+use thiserror::Error;
 
+/// Placeholder type for an event identifier.
+pub type EventId = u64;
 
-- Date (UTC): 2025-10-28 03:31
-- Date (UTC): 2025-10-28 04:42
-- Area: Observability|Policy|Orchestrator
-- Context/Goal: GREEN phase for T-6a-E2-OBS-09 (Audit + metrics for governance) — wire OTel-backed policy observer, enrich policy spans, and ensure PII redaction in WAL audit path.
-- Actions:
-  - Implemented telemetry::policy_observer (OTel) with counter "policy.decision.count" and attributes {phase, kind, action}
-  - Recorded decision_kind and rule_name on agent.policy.check spans in orchestrator; added PII redaction helper for audit.reason
-  - Fixed tests: separate engines to avoid precedence interaction in RED test; YAML quoting bug in audit reason
-  - Ran validations: cargo fmt --all; cargo clippy --workspace --all-features -D warnings; cargo test --workspace --all-features -- --nocapture
-- Results:
-  - All tests PASS (workspace + doctests); clippy/fmt PASS
-  - New files: crates/telemetry/src/policy_observer.rs; README note in crates/policy/README.md about OTel integration
-- Diagnostics:
-  - Naive rule matching means deny ToolInvocation matches unconditionally; use separate engines in tests to avoid Deny dominating Allow-by-flag
-  - Avoid initializing OTLP pipeline implicitly in tests (requires tokio runtime); rely on global no-op meter when exporter not configured
-- Decision(s): Proceed to REFACTOR (docs polish, attribute names settled: decision_kind, rule_name); keep observer optional and fail-closed by default.
-- Follow-ups:
-  - Update PR #78 body with AC mapping and validation evidence; mark Ready for Review
-  - If approved, squash-merge, close Issue #77, clean branch, sync main, re-run validations, update TODO.md
+/// Errors emitted by the event log.
+#[derive(Debug, Error)]
+pub enum EventLogError {
+    #[error("io: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("serialize: {0}")]
+    Serde(#[from] serde_json::Error),
+    #[error("invalid: {0}")]
+    Invalid(String),
+}
 
+/// Minimal event record persisted to the log.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventRecord<T> {
+    /// Monotonic event id assigned on append.
+    pub id: EventId,
+    /// Millis since epoch (caller supplies; Phase 0 keeps it simple).
+    pub ts_ms: u64,
+    /// Payload (schema defined elsewhere; Phase 0 uses generic T).
+    pub payload: T,
+}
 
-- Area: Policy
-- Context/Goal: Complete T-6a-E2-POL-05 (Governance baseline) by merging observability + audit hooks with deterministic ordering and deny-on-error posture; finalize docs and close out the task.
-- Actions:
-  - Squash-merged PR #76 to main (commit 86ab6badf6e9d6a65375b6d818b7015d2581f87b)
-  - Deleted branch feat/governance-baseline (remote+local), synced main
-  - Added crates/policy/README.md with PolicyObserver/policy_metrics examples
-  - Expanded rustdoc for PolicyObserver, set_observer, PolicyMetrics/policy_metrics, AuditSink/install_audit_sink
-  - Validations on main: cargo test/clippy/fmt
-- Results:
-  - Tests: PASS (workspace, all-features; doc-tests included)
-  - Clippy: PASS (-D warnings)
-  - Fmt: PASS
-  - Merge SHA: 86ab6badf6e9d6a65375b6d818b7015d2581f87b
-- Diagnostics:
-  - Acceptance criteria satisfied: deterministic precedence (priority → most-restrictive → first-match), deny-on-error, low-cardinality metrics policy.decision.count{phase,kind,action} (alias flag for allow_but_flag), per-decision audit records
-- Decision(s): Task closed; governance baseline in place with observability and audit. Proceed to next NOT_STARTED task per Docs/TODO.md.
-- Follow-ups:
-  - Consider dashboards for policy metrics; integrate with broader observability (E2-OBS-09)
-  - Evaluate adapter parity tasks dependent on governance baseline
+/// A simple JSONL-backed append-only event log.
+#[derive(Debug, Clone)]
+pub struct JsonlEventLog {
+    path: String,
+}
 
+impl JsonlEventLog {
+    /// Create or open a log at `path`.
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, EventLogError> {
+        let p = path.as_ref();
+        if !p.exists() {
+            OpenOptions::new().create(true).write(true).truncate(true).open(p)?;
+        }
+        Ok(Self { path: p.to_string_lossy().into_owned() })
+    }
 
-- Date (UTC): 2025-10-28 00:44
-  Area: Policy
-  Context/Goal: GREEN phase for T-6a-E2-POL-05 governance baseline — add observability hooks and audit sink; make RED tests pass.
-  Actions:
-  - Implemented PolicyObserver + set_observer(), policy_metrics() counters, and install_audit_sink() in crates/policy/src/lib.rs
-  - Wired emissions in pre_start_run, pre_submit_task, post_submit_task; added minimal docs and clippy fix
-  - Ran validations: cargo fmt/clippy/tests (policy crate and workspace)
-  Results:
-  - All policy tests PASS (including governance_baseline_red now GREEN)
-  - Workspace tests PASS; clippy -D warnings PASS; fmt --check PASS
-  Diagnostics:
-  - Using OnceLock + Mutex for in-process metrics/audit is sufficient for determinism and low-cardinality counters
-  Decisions:
-  - Proceed to REFACTOR to enhance rustdoc and ensure full observability coverage per rules
-  Follow-ups:
-  - REFACTOR phase: polish docs, add examples, ensure CI gates; then mark PR #76 ready and request review
+    /// Append a payload; returns assigned EventId.
+    pub fn append<T: Serialize>(
+        &self,
+        id: EventId,
+        ts_ms: u64,
+        payload: &T,
+    ) -> Result<EventId, EventLogError> {
+        let mut file = OpenOptions::new().append(true).open(&self.path)?;
+        let rec = EventRecord { id, ts_ms, payload };
+        let line = serde_json::to_string(&rec)?;
+        file.write_all(line.as_bytes())?;
+        file.write_all(b"\n")?;
+        file.flush()?;
+        Ok(id)
+    }
 
-- Date (UTC): 2025-10-28 00:09
-- Area: Policy|Tests|Docs|Git
-- Context/Goal: Kick off T-6a-E2-POL-05 (Governance baseline) via TDD RED phase: add failing acceptance tests, open branch/issue/PR.
-- Actions:
-  - Created branch feat/governance-baseline from main
-  - Added RED tests: crates/policy/tests/governance_baseline_red.rs covering precedence, deny-on-error, allowlist, observability (metrics), and audit events
-  - Ran: cargo test -p policy -- --nocapture (expected RED compile errors)
-  - Pushed branch; opened Issue #75 and Draft PR #76 (Refs #75)
-- Results:
-  - cargo test -p policy: FAIL as expected; missing APIs in policy crate reported by rustc
-    - E0405: trait PolicyObserver not found; E0425: set_observer/policy_metrics/install_audit_sink not found
-  - Branch: origin/feat/governance-baseline; Issue #75 open; PR #76 open (draft)
-- Diagnostics:
-  - Observability (metrics) and audit hooks are not yet exposed by policy; will be added in GREEN via minimal, fail-closed wiring and low-cardinality metrics (policy.decision.count)
-- Decision(s): Proceed to GREEN phase to implement observer/metrics/audit wiring and satisfy tests while maintaining deterministic precedence and deny-on-error posture.
-- Follow-ups:
-  - Implement GREEN per AC; keep clippy -D warnings and coverage ≥90% for core policy logic; document precedence in rustdoc
+    /// Read events with id in [start, end) (half-open range).
+    pub fn read_range<T: for<'de> Deserialize<'de>>(
+        &self,
+        start: EventId,
+        end: EventId,
+    ) -> Result<Vec<EventRecord<T>>, EventLogError> {
+        let file = File::open(&self.path)?;
+        let reader = BufReader::new(file);
+        let mut out = Vec::new();
+        for line in reader.lines() {
+            let line = line?;
+            if line.is_empty() {
+                continue;
+            }
+            let rec: EventRecord<T> = serde_json::from_str(&line)?;
+            if rec.id >= start && rec.id < end {
+                out.push(rec);
+            }
+        }
+        Ok(out)
+    }
+}
 
+/// Example usage (doc test):
+///
+/// ```
+/// use event_log::{JsonlEventLog, EventId};
+/// use serde::{Serialize, Deserialize};
+/// use std::time::{SystemTime, UNIX_EPOCH};
+///
+/// #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// struct P { v: u32 }
+///
+/// fn ts() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64 }
+///
+/// let path = tempfile::NamedTempFile::new().unwrap();
+/// let log = JsonlEventLog::open(path.path()).unwrap();
+///
+/// let _ = log.append(1 as EventId, ts(), &P { v: 10 }).unwrap();
+/// let _ = log.append(2 as EventId, ts(), &P { v: 20 }).unwrap();
+///
+/// let recs: Vec<event_log::EventRecord<P>> = log.read_range(1, 3).unwrap();
+/// assert_eq!(recs.len(), 2);
+/// assert_eq!(recs[0].payload, P { v: 10 });
+/// assert_eq!(recs[1].payload, P { v: 20 });
+///
+```
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
 
-- Date (UTC): 2025-10-27 07:02
-- Date (UTC): 2025-10-27 23:54
+    #[test]
+    fn append_and_read_roundtrip() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let log = JsonlEventLog::open(tmp.path()).unwrap();
+        let _ = log.append(1, 1, &"hello").unwrap();
+        let got: Vec<EventRecord<String>> = log.read_range(1, 2).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].payload, "hello");
+    }
+}
+
+/// WAL v2 typed schema with deterministic serialization and golden-tested stable ordering.
+pub mod v2 {
+    use serde::{Deserialize, Serialize};
+    use serde_json::Value;
+
+    pub const WAL_VERSION_V2: u8 = 2;
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    #[serde(rename_all = "snake_case")]
+    pub enum EventTypeV2 {
+        StartRun,
+        TaskEnqueued,
+        UsageUpdate,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+    pub struct Attachment {
+        pub digest_sha256: String,
+        pub size_bytes: u64,
+        pub mime: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub encoding: Option<String>,
+        pub compression: String, // "zstd" | "none"
+    }
+
+    impl Ord for Attachment {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            self.digest_sha256.cmp(&other.digest_sha256)
+        }
+    }
+    impl PartialOrd for Attachment {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RecordV2<T> {
+        pub id: super::EventId,
+        pub ts_ms: u64,
+        pub version: u8,
+        pub event_type: EventTypeV2,
+        pub run_id: String,
+        pub trace_id: String,
+        pub payload: T,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub attachments: Option<Vec<Attachment>>, // new field; serialized after payload
+        pub metadata: Value,
+    }
+
+    // Typed payloads to guarantee stable key ordering in serialization.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct StartRunPayload {
+        pub workflow_id: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct TaskEnqueuedPayload {
+        pub envelope_id: String,
+        pub agent: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct UsageUpdatePayload {
+        pub tokens: u64,
+        pub cost_micros: u64,
+    }
+
+    const ATTACH_MAX_COUNT: usize = 8;
+    const STR_MAX_LEN: usize = 128;
+    const TOTAL_ATTACH_JSON_MAX: usize = 8 * 1024; // bytes
+
+    fn is_hex_sha256(s: &str) -> bool {
+        s.len() == 64 && s.as_bytes().iter().all(|b| b.is_ascii_hexdigit())
+    }
+
+    /// Serialize a V2 record to a JSON line with stable field ordering and deterministic attachment ordering.
+    pub fn to_jsonl_line<T: Serialize>(rec: &RecordV2<T>) -> Result<String, super::EventLogError> {
+        // Validate + sort attachments deterministically by digest
+        let mut sorted: Option<Vec<Attachment>> = None;
+        if let Some(att) = &rec.attachments {
+            if att.len() > ATTACH_MAX_COUNT {
+                return Err(super::EventLogError::Invalid(format!(
+                    "attachments count {} exceeds max {}",
+                    att.len(), ATTACH_MAX_COUNT
+                )));
+            }
+            let mut a = att.clone();
+            for x in &a {
+                if !is_hex_sha256(&x.digest_sha256) {
+                    return Err(super::EventLogError::Invalid("invalid digest".into()));
+                }
+                if x.mime.len() > STR_MAX_LEN
+                    || x.encoding.as_deref().map(|e| e.len()).unwrap_or(0) > STR_MAX_LEN
+                    || x.compression.len() > STR_MAX_LEN
+                {
+                    return Err(super::EventLogError::Invalid("oversized attachment string field".into()));
+                }
+            }
+            a.sort();
+            // Rough size cap via JSON length of attachments only
+            let approx = serde_json::to_string(&a).map_err(super::EventLogError::Serde)?.len();
+            if approx > TOTAL_ATTACH_JSON_MAX {
+                return Err(super::EventLogError::Invalid("attachments too large".into()));
+            }
+            sorted = Some(a);
+        }
+
+        // Build a serialization wrapper to control field order explicitly.
+        #[derive(Serialize)]
+        struct RecordV2Ser<'a, T: Serialize> {
+            id: super::EventId,
+            ts_ms: u64,
+            version: u8,
+            event_type: &'a EventTypeV2,
+            run_id: &'a str,
+            trace_id: &'a str,
+            payload: &'a T,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            attachments: Option<&'a [Attachment]>,
+            metadata: &'a Value,
+        }
+
+        let ser = RecordV2Ser {
+            id: rec.id,
+            ts_ms: rec.ts_ms,
+            version: rec.version,
+            event_type: &rec.event_type,
+            run_id: &rec.run_id,
+            trace_id: &rec.trace_id,
+            payload: &rec.payload,
+            attachments: sorted.as_deref(),
+            metadata: &rec.metadata,
+        };
+
+        let s = serde_json::to_string(&ser)?;
+        Ok(s)
+    }
+}
+
 - Area: Storage|CI|Docs
 - Context/Goal: Complete T-6a-E4-BS-07 (Streaming IO + memory bounds) and T-6a-E4-BS-08 (BS2 read bounds & robustness); merge and validate on main.
 - Actions:

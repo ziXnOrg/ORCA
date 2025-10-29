@@ -210,7 +210,7 @@ The following tasks are the highest-priority items from Phase 6a. See the Phase 
 - [x] T-6a-E4-BS-08 — BS2 read bounds & robustness — AC: enforce header chunk_size; reject oversize clen; no unbounded allocations; typed failures; property tests + docs; Gates: fmt/clippy/tests PASS. (Merged via PR #74)
 
 #### crates/orchestrator + crates/event_log
-- [ ] T-6a-E4-ORCH-07 — Attachments + BlobRef in WAL — AC: as Quick Start; Deps: T-6a-E4-BS-06; Effort: 2d; Affected: orchestrator,event_log; Tests: integration+golden; Docs: API; Risk: Med; Rollback: strip.
+- [/] T-6a-E4-ORCH-07 — Attachments + BlobRef in WAL — AC: as Quick Start; Deps: T-6a-E4-BS-06; Effort: 2d; Affected: orchestrator,event_log; Tests: integration+golden; Docs: API; Risk: Med; Rollback: strip. (In progress on feat/wal-attachments; RESEARCH+RED+GREEN+REFACTOR complete; PR to be opened/merged)
 #### policy gates
 - [ ] T-6a-E4-SEC-08 — Antivirus + EXIF scrub — AC: as Quick Start; Deps: T-6a-E4-BS-06; Effort: 2d; Affected: policy,blob_store; Tests: integration; Docs: security; Risk: High; Rollback: quarantine.
 #### SDKs

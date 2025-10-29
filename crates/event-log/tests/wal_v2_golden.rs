@@ -1,6 +1,6 @@
 use event_log::v2::{
     to_jsonl_line, EventTypeV2, RecordV2, StartRunPayload, TaskEnqueuedPayload, UsageUpdatePayload,
-    WAL_VERSION_V2,
+    WAL_VERSION_V2, /* Attachment */
 };
 use serde_json::json;
 
@@ -14,8 +14,10 @@ fn wal_v2_sample_golden_red() {
         run_id: "R1".to_string(),
         trace_id: "T1".to_string(),
         payload: StartRunPayload { workflow_id: "WF1".into() },
+        attachments: None,
         metadata: json!({}),
     };
+
     let rec2 = RecordV2 {
         id: 2,
         ts_ms: 1001,
@@ -24,8 +26,10 @@ fn wal_v2_sample_golden_red() {
         run_id: "R1".to_string(),
         trace_id: "T1".to_string(),
         payload: TaskEnqueuedPayload { envelope_id: "EV1".into(), agent: "a1".into() },
+        attachments: None,
         metadata: json!({}),
     };
+
     let rec3 = RecordV2 {
         id: 3,
         ts_ms: 1002,
@@ -34,6 +38,7 @@ fn wal_v2_sample_golden_red() {
         run_id: "R1".to_string(),
         trace_id: "T1".to_string(),
         payload: UsageUpdatePayload { tokens: 123, cost_micros: 456789 },
+        attachments: None,
         metadata: json!({}),
     };
 
