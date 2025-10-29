@@ -1,4 +1,34 @@
 - Date (UTC): 2025-10-29 07:20
+- Date (UTC): 2025-10-29 07:40
+- Area: Orchestrator|Proxy|Performance|Security|Observability
+- Context/Goal: PERFORMANCE RESEARCH — T-6a-E1-PROXY-11: optimize SHA-256 digesting & capture path; quantify Tower Layer overhead; define budgets and validation.
+- Actions (Research & Plan):
+  - SHA-256 perf: evaluated streaming vs buffered; chunk sizes (32/64/128/256 KiB); SIMD/HW accel context (x86 SHA-NI, ARMv8 Crypto Ext) and library support.
+    - Keep `sha2` (pure Rust, already in workspace). Benchmark chunk sizes; default 64 KiB; avoid extra copies; prefer BufRead-based streaming.
+    - Zero-copy tactic: digest bytes as Prost encodes (future); for now, hash the final bytes with bounded buf.
+  - Tower Layer perf: confirm minimal overhead (axum/tower patterns); plan zero-allocation hot-path where possible; avoid string formatting; pre-allocate JSON maps only when needed.
+  - gRPC metadata extraction perf: avoid cloning MetadataMap; check only known keys; only build redaction map if sensitive headers present; small-capacity alloc (<=3 entries).
+  - OTel semconv & metrics: map WAL fields to rpc.system/rpc.service/rpc.method/rpc.grpc.status_code; metrics names finalized (see below).
+  - Measurement plan: Criterion benches for digest across sizes; integrate capture-on/off microbench to measure added RTT; memory profiling for bounded heap (optional pprof-rs).
+- Results/Decisions:
+  - Digest: use `sha2` streaming; measure 32/64/128/256 KiB chunks; adopt fastest; default 64 KiB unless data shows otherwise.
+  - Capture layer: implement `ProxyCaptureLayer` around Channel; borrow URI pieces; allocate only at WAL emission; compute request_id with monotonic ids.
+  - Redaction: only construct headers object when any sensitive key present; otherwise omit.
+  - WAL writes: keep JSON construction tight; reuse small strings where feasible; stable field ordering preserved.
+- Performance Budgets (task-specific):
+  - SHA-256 throughput target: digest 10 MiB in ≤40 ms (≈≥250 MB/s) on typical dev hardware (release build, single thread).
+  - Capture overhead: ≤2 ms p95 added RTT for unary RPC under unit load.
+  - Memory: no unbounded growth; max incremental buffering per request ≤64 KiB over payload; zero-copy where feasible.
+- Validation Plan:
+  - Criterion benches: sizes {1 KiB, 64 KiB, 1 MiB, 10 MiB} × chunk {32/64/128/256 KiB}; record best chunk; attach results.
+  - E2E microbench: client→server call with capture on/off; report delta (p50/p95).
+  - Sanity: `cargo clippy -- -D warnings`, `cargo fmt -- --check`, orchestrator tests.
+- Sources:
+  - Tonic method/URL in interceptor limits: https://github.com/hyperium/tonic/issues/300 ; Tower layering patterns (low overhead): https://github.com/hyperium/tonic/discussions/1200 ; Axum/Tower overhead claims: crates.io/crates/axum
+  - OTel RPC attributes/metrics: https://opentelemetry.io/docs/specs/semconv/registry/attributes/rpc/ • https://opentelemetry.io/docs/specs/semconv/rpc/grpc/ • https://opentelemetry.io/docs/specs/semconv/rpc/rpc-metrics/
+  - SHA instruction background: https://stackoverflow.com/questions/20692386/are-there-in-x86-any-instructions-to-accelerate-sha-sha1-2-256-512-encoding ; ring perf anecdote (users.rust-lang.org): https://users.rust-lang.org/t/is-sha256-hashing-in-rust-slower-than-go/99740
+
+
 - Area: Orchestrator|Proxy|Security|Performance|Observability
 - Context/Goal: PRE-REFACTOR RESEARCH — T-6a-E1-PROXY-11: select SHA-256 crate, design client-side Tonic interceptor, align OTel semconv, and define metrics + AC for REFACTOR.
 - Actions (Research & Repo scan):
