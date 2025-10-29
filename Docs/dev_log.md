@@ -1,3 +1,22 @@
+- Date (UTC): 2025-10-29 19:28
+- Area: Orchestrator|Proxy|Tests|Bench|Docs
+- Context/Goal: RED — Add failing tests for client-side WAL emission + metrics stubs; extend capture_overhead bench for client ON/OFF (Issue #84).
+- Actions:
+  - Added tests file crates/orchestrator/tests/proxy_client_capture_red.rs with 4 failing tests covering: started event (direction="client"), finished correlation, redaction behavior, and metrics feature-gating.
+  - Extended crates/orchestrator/benches/capture_overhead.rs with client ON/OFF placeholders (RED: both use direct Channel until wiring exists).
+  - Ran cargo test -p orchestrator -- --nocapture → 4 failing (expected) in proxy_client_capture_red.rs; all existing tests passed.
+  - Ran cargo clippy -p orchestrator -- -D warnings → PASS; cargo fmt check unchanged.
+- Results:
+  - Tests: FAIL (RED as intended). Summary:
+    - failing tests: client_emits_external_io_started; client_emits_external_io_finished_with_correlation; client_redaction_only_when_sensitive_headers_present; metrics_stubs_feature_gated_and_no_op_when_disabled
+  - Clippy: clean; no new warnings.
+- Next Steps (GREEN):
+  - Introduce `capture` feature flag and add wiring in ProxyCapturedChannel::call() to emit WAL ExternalIoStarted/Finished with direction="client" and deterministic request_id.
+  - Store scheme/host/port at builder time; extract method from req.uri().path(); implement redaction via HeaderMap helper.
+  - Add OTel metrics instruments under `otel` feature; ensure low-cardinality labels; make metrics no-op when disabled.
+  - Update and run client ON/OFF benchmark to validate ≤2 ms p95 overhead.
+
+
 - Date (UTC): 2025-10-29 19:14
 - Area: Orchestrator|Proxy|Observability|Performance|Docs|Git
 - Context/Goal: RESEARCH — Client-side capture wiring follow-up: WAL emission + OTel metrics for outbound gRPC (direction="client"). Kick off Enhanced TDD for new task.
