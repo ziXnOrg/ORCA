@@ -1,3 +1,35 @@
+- Date (UTC): 2025-10-29 19:14
+- Area: Orchestrator|Proxy|Observability|Performance|Docs|Git
+- Context/Goal: RESEARCH — Client-side capture wiring follow-up: WAL emission + OTel metrics for outbound gRPC (direction="client"). Kick off Enhanced TDD for new task.
+- Actions (read-only, initial):
+  - Reviewed ProxyCaptureLayer skeleton (crates/orchestrator/src/proxy.rs) and CapturedChannelBuilder; current Service<Request<BoxBody>> only exposes path; scheme/host/port not available from Request.
+  - Confirmed WAL v2 schema in event-log: ExternalIoStarted/ExternalIoFinished payloads exist with required fields (system, direction, scheme, host, port, method, request_id, headers, body_digest_sha256; and finished status/duration_ms).
+  - Surveyed telemetry crate for metrics patterns (OnceCell instruments, global::meter usage, feature-gated `otel`); identified examples in blob_observer and policy_observer.
+  - Noted orchestrator Cargo features: only `otel` present; no `capture` feature yet.
+  - Recalled Tower Service poll_ready/call patterns (forward readiness; wrap call with timing/try/fail-closed logic).
+- Findings:
+  - Endpoint extraction: Request URI carries only "/pkg.Svc/Method"; to capture scheme/host/port we must store a Uri/Endpoint at build-time in ProxyCapturedChannel (extend struct fields).
+  - Deterministic request_id via orca_core::ids::next_monotonic_id(); use VirtualClock for t0/t1 (process_clock()).
+  - Redaction: reuse redacted_headers_from_http(&HeaderMap) for client path; build headers map only if sensitive keys present (≤3 entries).
+  - Metrics: add histogram orca.proxy.capture.duration_ms (Unit ms) and counter orca.proxy.capture.errors_total with low-cardinality labels {system="grpc", direction="client", status} using telemetry/otel patterns. No exporter → no-op.
+  - Gating: introduce orchestrator `capture` feature flag (default-off). Also honor env bypass ORCA_BYPASS_TO_DIRECT for runtime fail-open override when explicitly requested.
+- Acceptance Criteria (restated):
+  - Emit started/finished WAL around outbound gRPC in ProxyCaptureLayer::call(), direction="client", deterministic request_id, redacted headers.
+  - Extract scheme/host/port from stored endpoint; method from req.uri().path().
+  - Metrics emitted with low-cardinality labels; failures increment errors_total.
+  - Overhead: ≤2 ms p95 added RTT; memory bounded (≤64 KiB incremental); feature default-off; zero/near-zero overhead when disabled.
+- Validation Plan:
+  - Extend Criterion bench capture_overhead to toggle client layer ON/OFF and measure delta (p50/p95).
+  - Unit + integration tests for WAL records (started→finished correlation; redaction present only when sensitive headers exist); feature-flag tests.
+  - Workspace gates: tests, clippy -D warnings, fmt check.
+- Risks & Mitigations:
+  - Accessing endpoint from within Service::call: mitigate by storing Uri parts in ProxyCapturedChannel via builder; avoid cloning large strings (store small owned strings prepared once per channel).
+  - Cardinality drift: cap status to known grpc codes; keep labels low-cardinality per observability rules.
+- Next Steps:
+  - RED: add failing tests for client WAL emission/redaction and metrics stubs; extend microbench scaffold for client ON/OFF.
+  - GREEN: implement ProxyCapturedChannel fields + call() wrapper; wire WAL/metrics (feature-gated `capture`).
+
+
 - Date (UTC): 2025-10-29 18:38
 - Area: Orchestrator|Proxy|Performance|CI|Docs|Git
 - Context/Goal: Complete standard end-of-task workflow for T-6a-E1-PROXY-11 — squash-merge PR, close issue, cleanup branches, sync main, validate, and update docs.
