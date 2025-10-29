@@ -11,7 +11,7 @@ fn make_payload(size: usize) -> Vec<u8> {
 }
 
 fn bench_sha256_builtin(c: &mut Criterion) {
-    let sizes = [1 * 1024, 64 * 1024, 1 * 1024 * 1024, 10 * 1024 * 1024];
+    let sizes = [1024, 64 * 1024, 1024 * 1024, 10 * 1024 * 1024];
     let mut group = c.benchmark_group("sha256_hex_builtin");
     for &sz in &sizes {
         let data = make_payload(sz);
@@ -25,7 +25,7 @@ fn bench_sha256_builtin(c: &mut Criterion) {
 }
 
 fn bench_sha256_chunk_sizes(c: &mut Criterion) {
-    let sizes = [1 * 1024, 64 * 1024, 1 * 1024 * 1024, 10 * 1024 * 1024];
+    let sizes = [1024, 64 * 1024, 1024 * 1024, 10 * 1024 * 1024];
     let chunks = [32 * 1024, 64 * 1024, 128 * 1024, 256 * 1024];
     let mut group = c.benchmark_group("sha256_chunk_sizes");
     for &sz in &sizes {
