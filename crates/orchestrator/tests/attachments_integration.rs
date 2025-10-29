@@ -1,4 +1,5 @@
-use event_log::{EventRecord, JsonlEventLog};
+use event_log::JsonlEventLog;
+use orchestrator::orca_v1::orchestrator_server::Orchestrator;
 use orchestrator::orca_v1::*;
 use orchestrator::OrchestratorService;
 use serde_json::json;
@@ -15,7 +16,7 @@ async fn orchestrator_emits_attachments_metadata_red() {
     let payload = json!({
         "kind": "agent_task",
         "blob_ref": {
-            "digest_sha256": "00e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0",
+            "digest_sha256": "00e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0deadbeef",
             "size_bytes": 1024u64,
             "mime": "text/plain"
         },
@@ -36,11 +37,13 @@ async fn orchestrator_emits_attachments_metadata_red() {
     };
 
     let _ = svc
-        .submit_task(tonic::Request::new(SubmitTaskRequest { run_id: "wf1".into(), task: Some(env) }))
+        .submit_task(tonic::Request::new(SubmitTaskRequest {
+            run_id: "wf1".into(),
+            task: Some(env),
+        }))
         .await;
 
     // Read WAL and assert that an attachments array is present in the emitted record
     let file = std::fs::read_to_string(&path).unwrap();
     assert!(file.contains("\"attachments\""), "expected attachments array in WAL record");
 }
-

@@ -188,6 +188,34 @@ impl OrchestratorService {
             .map_err(|e| Status::internal(format!("policy load failed: {}", e)))
     }
 
+    /// Extract attachments array from an Envelope JSON object, if a BlobRef is present.
+    fn extract_attachments_from_env(&self, env: &JsonValue) -> Option<JsonValue> {
+        env.get("payload_json")
+            .and_then(|v| v.as_str())
+            .and_then(|s| self.extract_attachments_from_payload(s))
+    }
+
+    /// Extract attachments array (single element) from a payload_json string when it contains
+    /// a `blob_ref` object. Only metadata is recorded (digest, size, mime, compression), never raw bytes.
+    /// Defaults: mime=application/octet-stream, compression="none".
+    fn extract_attachments_from_payload(&self, payload_json_str: &str) -> Option<JsonValue> {
+        if let Ok(payload_v) = serde_json::from_str::<serde_json::Value>(payload_json_str) {
+            if let Some(obj) = payload_v.get("blob_ref").and_then(|v| v.as_object()) {
+                let digest = obj.get("digest_sha256").and_then(|v| v.as_str()).unwrap_or("");
+                let size = obj.get("size_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+                let mime =
+                    obj.get("mime").and_then(|v| v.as_str()).unwrap_or("application/octet-stream");
+                let mut att = serde_json::Map::new();
+                att.insert("digest_sha256".into(), serde_json::Value::String(digest.to_string()));
+                att.insert("size_bytes".into(), serde_json::Value::Number(size.into()));
+                att.insert("mime".into(), serde_json::Value::String(mime.to_string()));
+                att.insert("compression".into(), serde_json::Value::String("none".into()));
+                return Some(serde_json::Value::Array(vec![serde_json::Value::Object(att)]));
+            }
+        }
+        None
+    }
+
     /// Append a policy audit record to the WAL.
     ///
     /// Emits an audit event only when the policy intervenes (deny, modify, or allow_but_flag).
@@ -229,7 +257,10 @@ impl OrchestratorService {
         let trace_id = env.get("trace_id").and_then(|v| v.as_str());
 
         let sanitized_reason = d.reason.as_deref().map(redact_pii_reason);
-        let evt = json!({
+        // Optionally include attachments metadata if the envelope payload references a blob
+        let attachments_json: Option<serde_json::Value> = self.extract_attachments_from_env(env);
+
+        let mut evt = json!({
             "event": "policy_audit",
             "phase": phase,
             "run_id": run_id,
@@ -243,6 +274,9 @@ impl OrchestratorService {
             "reason": sanitized_reason,
             "outcome": outcome,
         });
+        if let (Some(atts), Some(obj)) = (attachments_json, evt.as_object_mut()) {
+            obj.insert("attachments".into(), atts);
+        }
         let _ = self.log.append(
             orca_core::ids::next_monotonic_id(),
             crate::clock::process_clock().now_ms(),
@@ -595,13 +629,24 @@ impl Orchestrator for OrchestratorService {
         let env = r.task.as_ref().unwrap();
         self.seen_ids.insert(env.id.clone());
         let env_json2 = serde_json::to_value(env).map_err(internal_serde)?;
+        // Extract attachments metadata from the payload_json if present
+        let attachments_json: Option<serde_json::Value> =
+            self.extract_attachments_from_payload(&env.payload_json);
+
         let run_id = r.run_id.clone();
         self.retry(
             || async {
                 let _span = info_span!("wal.append", event="task_enqueued", run=%run_id).entered();
-                let evt = json!({
-                    "event":"task_enqueued", "run_id": run_id, "envelope": env_json2
-                });
+                // Build event payload with optional attachments metadata (if any)
+                let mut evt_obj = serde_json::Map::new();
+                evt_obj.insert("event".into(), serde_json::Value::String("task_enqueued".into()));
+                evt_obj.insert("run_id".into(), serde_json::Value::String(run_id.clone()));
+                evt_obj.insert("envelope".into(), env_json2.clone());
+                if let Some(atts) = attachments_json.clone() {
+                    // captured by the async closure
+                    evt_obj.insert("attachments".into(), atts);
+                }
+                let evt = serde_json::Value::Object(evt_obj);
                 let evt = self.redact_event_payload(evt);
                 self.log
                     .append(
