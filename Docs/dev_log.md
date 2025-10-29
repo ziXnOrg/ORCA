@@ -1,3 +1,35 @@
+- Date (UTC): 2025-10-29 07:20
+- Area: Orchestrator|Proxy|Security|Performance|Observability
+- Context/Goal: PRE-REFACTOR RESEARCH — T-6a-E1-PROXY-11: select SHA-256 crate, design client-side Tonic interceptor, align OTel semconv, and define metrics + AC for REFACTOR.
+- Actions (Research & Repo scan):
+  - Digest crates: compared `sha2` (pure Rust) vs `ring` (BoringSSL-derived) for streaming SHA-256; reviewed API ergonomics and maintenance.
+    - Docs: https://docs.rs/sha2/latest/sha2/ • https://briansmith.org/rustdoc/ring/digest/index.html
+  - Tonic interceptor patterns: reviewed interceptor vs Tower Layer trade-offs and method/path extraction limitations.
+    - Tonic issue (method/URL in interceptor): https://github.com/hyperium/tonic/issues/300 • Tower layering: https://github.com/hyperium/tonic/discussions/1200
+  - OTel semconv: gRPC/RPC attributes incl. rpc.system, rpc.service, rpc.method, rpc.grpc.status_code; RPC metrics naming.
+    - RPC attributes: https://opentelemetry.io/docs/specs/semconv/registry/attributes/rpc/ • gRPC: https://opentelemetry.io/docs/specs/semconv/rpc/grpc/ • RPC metrics: https://opentelemetry.io/docs/specs/semconv/rpc/rpc-metrics/
+  - Repo scan:
+    - Existing digest usage: `sha2` already used in crates/plugin_host and crates/blob_store (digest traits + hex encoding); no `ring` dependency present.
+    - Outbound gRPC clients: currently only in tests (OrchestratorClient::connect). No production outbound clients yet; plan a builder/wrapper for future use.
+- Results:
+  - Selected crate: `sha2` for SHA-256 (streaming via Digest/Update, pure Rust, widely used, already a workspace dep; minimal friction; deterministic hex via `hex`).
+  - Deterministic body hashing API plan: streaming digest with bounded memory (64 KiB chunks), lower-case hex; function shape `fn sha256_hex<R: Read>(r: &mut R) -> Result<String>`, fallible to surface IO errors; avoid unbounded buffers.
+  - Client-side capture wiring plan: prefer Tower Layer around `tonic::transport::Channel` for richer access (URI/endpoint) and timing; generate request_id via `orca_core::ids::next_monotonic_id()`; extract method from `Request::uri().path()` (e.g., "/pkg.Svc/Method"); scheme/host/port from Channel Endpoint; emit WAL ExternalIOStarted/Finished with direction="client".
+  - OTel mapping plan (low-cardinality): rpc.system="grpc", rpc.service, rpc.method, network peer attrs; finished maps status to grpc status code; align metric with `rpc.client.duration` histogram semantics where feasible.
+  - Metrics plan: counters `orca.proxy.capture.errors_total`, histograms `orca.proxy.capture.duration_ms` (buckets tuned for sub-10ms to 1s), labels: system, direction, status (capped set), avoiding high-cardinality.
+- Diagnostics:
+  - Interceptor alone is limited for method/URI; Tower Layer provides needed context for outbound capture. No current prod outbound clients, so introduce a client builder that composes Channel + Layer for future sites and tests.
+  - `sha2` consistency across repo reduces supply-chain variance; performance adequate given 64 KiB streaming and typical gRPC payload sizes.
+- Decisions:
+  - Use `sha2` for SHA-256 in REFACTOR; streaming API with 64 KiB buffers; hex lowercase via `hex` crate; deterministic & bounded.
+  - Implement a `ProxyCaptureLayer` (Tower) and `CapturedChannelBuilder` for outbound clients; keep feature-gated and default-off; maintain fail-closed with explicit bypass flag.
+- Follow-ups (AC for REFACTOR):
+  - Implement real SHA-256 streaming; replace stub; add unit test with >5MB payload to verify bounded memory and stable digest.
+  - Add client-side capture Layer + builder; e2e test that emits ExternalIOStarted/Finished (direction="client"); ensure request_id correlation and semconv-aligned fields.
+  - Emit metrics with final names and verify via WAL/telemetry hooks; keep cardinality low; document buckets.
+  - Validate: `cargo test -p orchestrator -- --nocapture`, `cargo clippy -- -D warnings`, `cargo fmt -- --check`; budget check: added overhead ≤2ms p95 under unit load.
+
+
 - Date (UTC): 2025-10-29 06:55
 - Area: Orchestrator|Proxy|EventLog|Security|Observability
 - Context/Goal: GREEN — T-6a-E1-PROXY-11 implement gRPC capture skeleton and WAL ExternalIO events; keep CI gates green.
