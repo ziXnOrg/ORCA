@@ -87,7 +87,7 @@ The following tasks are the highest-priority items from Phase 6a. See the Phase 
   - [ ] Artifacts & Repro: dev guide section; examples of injection
   - [ ] Rules referenced: rust-standards.md; agentic-architecture.md; testing-validation.md; performance-optimization.md
 #### crates/external_io_proxy (within orchestrator)
-- [ ] T-6a-E1-PROXY-11 — HTTP/gRPC capture skeleton — AC: proxy routes; redact config; WAL capture stubs; perf budgets; Deps: T-6a-E1-EL-01; Effort: 2d; Affected: crates/orchestrator; Tests: unit; Docs: proxy config; Risk: Med; Rollback: bypass to direct, warn.
+- [x] T-6a-E1-PROXY-11 — HTTP/gRPC capture skeleton — AC: proxy routes; redact config; WAL capture stubs; perf budgets; Deps: T-6a-E1-EL-01; Effort: 2d; Affected: crates/orchestrator; Tests: unit; Docs: proxy config; Risk: Med; Rollback: bypass to direct, warn.
   - [ ] Framework: First Principles (trust boundaries, capture points)
   - [ ] Context Retrieval
     - [ ] Stratum 1: orchestrator http/grpc clients; E1 spec; hostcall catalog
