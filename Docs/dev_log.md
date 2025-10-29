@@ -1,3 +1,23 @@
+- Date (UTC): 2025-10-29 06:55
+- Area: Orchestrator|Proxy|EventLog|Security|Observability
+- Context/Goal: GREEN — T-6a-E1-PROXY-11 implement gRPC capture skeleton and WAL ExternalIO events; keep CI gates green.
+- Actions:
+  - event-log v2: Added EventTypeV2::ExternalIoStarted/ExternalIoFinished + payload structs; added golden test and fixture.
+  - orchestrator: server-side capture in StartRun/SubmitTask with redaction map (authorization/cookie/x-api-key→"[REDACTED]"), deterministic request_id, started/finished WAL stubs, basic timing metric.
+  - Fail-closed: deny when capture fails unless ORCA_BYPASS_TO_DIRECT=1; added x-orca-capture-fail request metadata for deterministic test-only injection (avoids env races); env toggles remain supported.
+  - Tests: crates/orchestrator/tests/proxy_grpc_red.rs now GREEN (4/4); event-log golden for ExternalIO passes.
+- Results:
+  - cargo test -p orchestrator --test proxy_grpc_red — PASS (4/4)
+  - cargo test -p event-log — PASS; cargo clippy (orchestrator,event-log) -D warnings — clean; cargo fmt — clean
+- Diagnostics:
+  - Env var mutation across concurrent tests caused nondeterminism; resolved by supporting per-request metadata flag (low-cardinality, test-only) while retaining env-based controls for runtime.
+- Decisions:
+  - Keep body_digest_sha256 as placeholder in GREEN; implement real SHA-256 in REFACTOR (candidate crates: sha2 or ring) with deterministic API and bounded buffering.
+  - Plan client-side interceptor wiring for outbound captures and align attributes with OTel semconv.
+- Follow-ups:
+  - PRE-REFACTOR RESEARCH: select digest crate, finalize client-side interceptor design + AC, define metrics names and caps.
+
+
 - Date (UTC): 2025-10-29 04:55
 - Area: Orchestrator|Proxy|Security|Observability
 - Context/Goal: RESEARCH — T-6a-E1-PROXY-11 (HTTP/gRPC capture skeleton) to design safe, deterministic external I/O capture with redaction and low overhead.
