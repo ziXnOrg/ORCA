@@ -1338,6 +1338,27 @@ Harden metrics exporter: real OTLP pipeline, env-configurable, counters/histogra
 #### Area
 Observability|Docs
 
+
+- Date (UTC): 2025-10-29 04:39
+- Area: Runtime|WAL
+- Context/Goal: Complete T-6a-E4-ORCH-07 — Attachments + BlobRef in WAL; merge to main and finalize standard workflow.
+- Actions:
+  - Squash-merged PR #82 to main; closed Issue #81 with validation evidence and AC mapping
+  - Deleted feature branch feat/wal-attachments (remote + local); synced main (ff-only)
+  - Re-ran workspace validations on main: cargo fmt --all -- --check; cargo clippy --workspace --all-features -D warnings; cargo test --workspace --all-features -- --nocapture
+  - Updated Docs/TODO.md to mark ORCH-07 COMPLETE (Refs: PR #82, Issue #81)
+- Results:
+  - fmt: PASS; clippy: PASS; tests: PASS (workspace, including wal_v2_attachments_golden, v1_v2_compat, orchestrator attachments integration)
+  - Determinism upheld: stable field ordering and attachments sorting verified via golden
+  - Security posture: metadata-only in WAL; no PII/secrets; size bounds enforced
+- Diagnostics:
+  - Attachments are optional for backward compatibility; readers unaffected when absent
+  - Helper extraction in orchestrator removes duplication and keeps envelope parsing bounded
+- Decision(s):
+  - Task T-6a-E4-ORCH-07 is complete; normative order: attachments after payload in V2 schema
+- Follow-ups:
+  - Next Phase 6a candidates: T-6a-E1-PROXY-11 (External I/O capture skeleton) or T-6a-E1-LLM-12 (LLM capture). Awaiting selection/approval.
+
 #### Context/Goal
 Integrate Jaeger visualization and provide setup docs.
 
