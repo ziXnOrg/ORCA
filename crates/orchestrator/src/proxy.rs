@@ -146,7 +146,8 @@ where
             // Extract method and headers; redaction only when sensitive headers present.
             let method_path = req.uri().path().to_string();
             let headers_map = redacted_headers_from_http(req.headers()).unwrap_or_default();
-            let started = serde_json::json!({
+            // Build started payload and include headers only when non-empty (Opt 3).
+            let mut started_obj = serde_json::json!({
                 "event": "external_io_started",
                 "system": "grpc",
                 "direction": "client",
@@ -155,9 +156,12 @@ where
                 "port": self.port,
                 "method": method_path,
                 "request_id": rid,
-                "headers": serde_json::Value::Object(headers_map),
                 "body_digest_sha256": sha256_hex(&[]),
-            });
+            }).as_object().unwrap().clone();
+            if !headers_map.is_empty() {
+                started_obj.insert("headers".to_string(), serde_json::Value::Object(headers_map));
+            }
+            let started = serde_json::Value::Object(started_obj);
             let _ = logc.append(orca_core::ids::next_monotonic_id(), t0, &started);
         }
 
@@ -353,12 +357,12 @@ mod tests {
         assert!(started_events.len() >= 2);
         let first = started_events.remove(0);
         let second = started_events.remove(0);
-        let h1 = first.payload.get("headers").unwrap();
-        let h2 = second.payload.get("headers").unwrap();
-        let h1_str = h1.to_string();
+        // When no sensitive headers are present, the headers field should be absent.
+        assert!(first.payload.get("headers").is_none(), "headers should be absent when no sensitive headers present");
+        // When sensitive headers are present, headers should include redacted entries.
+        let h2 = second.payload.get("headers").expect("headers should be present for sensitive headers");
         let h2_str = h2.to_string();
-        assert!(h1_str == "{}" || h2_str == "{}", "one headers map should be empty");
-        assert!(h1_str.contains("authorization") || h2_str.contains("authorization"));
+        assert!(h2_str.contains("authorization"), "expected authorization to be redacted in headers");
     }
 
     #[cfg(feature = "otel")]
