@@ -99,7 +99,8 @@ fn bench_client_capture_overhead(c: &mut Criterion) {
     let endpoint = format!("http://{}", addr);
 
     // Base channel shared across benches
-    let channel = rt.block_on(async { Channel::from_shared(endpoint).unwrap().connect().await.unwrap() });
+    let channel =
+        rt.block_on(async { Channel::from_shared(endpoint).unwrap().connect().await.unwrap() });
 
     // Client OFF (no ProxyCaptureLayer)
     c.bench_function("grpc_client_round_trip_off", |b| {
@@ -125,22 +126,45 @@ fn bench_client_capture_overhead(c: &mut Criterion) {
         })
     });
 
-    // Client ON (with ProxyCaptureLayer) — RED: placeholder (same as OFF until wired)
+    // Client ON (with ProxyCaptureLayer)
     c.bench_function("grpc_client_round_trip_on", |b| {
         b.iter_custom(|iters| {
             let mut total = std::time::Duration::ZERO;
             for _ in 0..iters {
                 let fut = async {
-                    // TODO(GREEN): wrap `channel` with ProxyCaptureLayer once wired
-                    let mut client = OrchestratorClient::new(channel.clone());
-                    let _ = client
-                        .start_run(StartRunRequest {
-                            workflow_id: "wf".into(),
-                            initial_task: None,
-                            budget: None,
-                        })
-                        .await
-                        .unwrap();
+                    #[cfg(feature = "capture")]
+                    {
+                        // Enable runtime capture and set a sink
+                        std::env::set_var("ORCA_CAPTURE_EXTERNAL_IO", "1");
+                        let tmp = tempfile::tempdir().unwrap();
+                        let log =
+                            JsonlEventLog::open(tmp.path().join("client_bench.jsonl")).unwrap();
+                        orchestrator::proxy::set_capture_log(log);
+                        let svc = tower::ServiceBuilder::new()
+                            .layer(orchestrator::proxy::ProxyCaptureLayer::default())
+                            .service(channel.clone());
+                        let mut client = OrchestratorClient::new(svc);
+                        let _ = client
+                            .start_run(StartRunRequest {
+                                workflow_id: "wf".into(),
+                                initial_task: None,
+                                budget: None,
+                            })
+                            .await
+                            .unwrap();
+                    }
+                    #[cfg(not(feature = "capture"))]
+                    {
+                        let mut client = OrchestratorClient::new(channel.clone());
+                        let _ = client
+                            .start_run(StartRunRequest {
+                                workflow_id: "wf".into(),
+                                initial_task: None,
+                                budget: None,
+                            })
+                            .await
+                            .unwrap();
+                    }
                 };
                 let start = std::time::Instant::now();
                 rt.block_on(fut);
