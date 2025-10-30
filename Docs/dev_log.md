@@ -1,3 +1,28 @@
+- Date (UTC): 2025-10-30 12:10
+- Area: Runtime|Proxy|Tests|Docs
+- Context/Goal: GREEN — client-side capture wiring (Issue #84). Move capture-enabled tests to unit tests to unblock symbol-resolution issue; validate WAL emission + metrics under feature flags.
+- Actions:
+  - Moved 3 capture-gated tests from crates/orchestrator/tests/proxy_client_capture_red.rs → unit tests in crates/orchestrator/src/proxy.rs under #[cfg(all(test, feature="capture"))].
+  - Kept a minimal non-capture integration test verifying redacted_headers_from_http behavior when capture feature is disabled.
+  - Validated capture metrics stub by appending a WAL metric record when feature "otel" is enabled.
+  - Ran validation gates:
+    - cargo fmt --all -- --check
+    - cargo clippy -p orchestrator -p event-log -- -D warnings
+    - cargo test -p orchestrator --features capture -- --nocapture
+    - cargo test -p orchestrator -- --nocapture
+- Results:
+  - fmt: PASS; clippy: PASS.
+  - Tests (capture ON): PASS — unit tests in src/proxy.rs (3/3), integration file has 0 capture tests by design.
+  - Tests (default features): PASS — all orchestrator tests, including minimal integration test.
+- Diagnostics:
+  - Integration test symbol resolution against orchestrator::proxy::* under features=capture was brittle. Co-locating capture tests with implementation reduced surface area changes and kept tests hermetic and deterministic.
+- Decision(s):
+  - Adopt unit tests for client capture path for GREEN to minimize scope and keep API stable. Proceed to PRE-REFACTOR RESEARCH next.
+- Follow-ups:
+  - PRE-REFACTOR RESEARCH: review cache locality, potential lock-free paths, telemetry coverage.
+  - PERFORMANCE RESEARCH: finalize ≤2 ms p95 overhead target; run/extend capture_overhead bench for ON vs OFF.
+
+
 - Date (UTC): 2025-10-29 19:28
 - Area: Orchestrator|Proxy|Tests|Bench|Docs
 - Context/Goal: RED — Add failing tests for client-side WAL emission + metrics stubs; extend capture_overhead bench for client ON/OFF (Issue #84).
