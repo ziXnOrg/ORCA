@@ -86,9 +86,9 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 // ===== Client-side capture layer (wired behind `capture` feature) =====
 use http::{Request, Response};
+use std::task::{Context, Poll};
 #[cfg(feature = "capture")]
 use std::{future::Future, pin::Pin};
-use std::task::{Context, Poll};
 use tonic::body::BoxBody;
 use tower::{Layer, Service};
 
@@ -157,7 +157,10 @@ where
                 "method": method_path,
                 "request_id": rid,
                 "body_digest_sha256": sha256_hex(&[]),
-            }).as_object().unwrap().clone();
+            })
+            .as_object()
+            .unwrap()
+            .clone();
             if !headers_map.is_empty() {
                 started_obj.insert("headers".to_string(), serde_json::Value::Object(headers_map));
             }
@@ -260,15 +263,14 @@ mod tests {
     use event_log::{EventRecord, JsonlEventLog};
     use http::Request;
     use serde_json::Value as JsonValue;
+    use std::sync::{Mutex, OnceLock};
     use tonic::body::BoxBody;
     use tower::{service_fn, Service};
-    use std::sync::{Mutex, OnceLock};
 
     static TEST_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
     fn serial_guard() -> std::sync::MutexGuard<'static, ()> {
         TEST_GUARD.get_or_init(|| Mutex::new(())).lock().unwrap()
     }
-
 
     fn run_captured_call_with_headers(headers: &[(&str, &str)], log: &JsonlEventLog) {
         std::env::set_var("ORCA_CAPTURE_EXTERNAL_IO", "1");
@@ -310,7 +312,6 @@ mod tests {
         run_captured_call_with_headers(&[("authorization", "Bearer token")], &log);
         // no-op read removed (was for debug)
 
-
         let recs = read_log_events(&log);
 
         let started = recs
@@ -346,7 +347,6 @@ mod tests {
 
         // no-op read removed (was for debug)
 
-
         let recs = read_log_events(&log);
         let mut started_events: Vec<&EventRecord<JsonValue>> = recs
             .iter()
@@ -358,11 +358,18 @@ mod tests {
         let first = started_events.remove(0);
         let second = started_events.remove(0);
         // When no sensitive headers are present, the headers field should be absent.
-        assert!(first.payload.get("headers").is_none(), "headers should be absent when no sensitive headers present");
+        assert!(
+            first.payload.get("headers").is_none(),
+            "headers should be absent when no sensitive headers present"
+        );
         // When sensitive headers are present, headers should include redacted entries.
-        let h2 = second.payload.get("headers").expect("headers should be present for sensitive headers");
+        let h2 =
+            second.payload.get("headers").expect("headers should be present for sensitive headers");
         let h2_str = h2.to_string();
-        assert!(h2_str.contains("authorization"), "expected authorization to be redacted in headers");
+        assert!(
+            h2_str.contains("authorization"),
+            "expected authorization to be redacted in headers"
+        );
     }
 
     #[cfg(feature = "otel")]
