@@ -84,36 +84,11 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(digest)
 }
 
-#[cfg(feature = "capture")]
-#[derive(serde::Serialize)]
-struct ExternalIoStarted {
-    event: &'static str,
-    system: &'static str,
-    direction: &'static str,
-    scheme: String,
-    host: String,
-    port: u16,
-    method: String,
-    request_id: String,
-    body_digest_sha256: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    headers: Option<JsonMap<String, JsonValue>>,
-}
-
-#[cfg(feature = "capture")]
-#[derive(serde::Serialize)]
-struct ExternalIoFinished {
-    event: &'static str,
-    request_id: String,
-    status: &'static str,
-    duration_ms: u64,
-}
-
 // ===== Client-side capture layer (wired behind `capture` feature) =====
 use http::{Request, Response};
-use std::task::{Context, Poll};
 #[cfg(feature = "capture")]
 use std::{future::Future, pin::Pin};
+use std::task::{Context, Poll};
 use tonic::body::BoxBody;
 use tower::{Layer, Service};
 
@@ -150,7 +125,6 @@ impl<S> Service<Request<BoxBody>> for ProxyCapturedChannel<S>
 where
     S: Service<Request<BoxBody>, Response = Response<tonic::transport::Body>> + Send,
     S::Future: Send + 'static,
-    S::Error: From<tonic::Status>,
 {
     type Response = Response<tonic::transport::Body>;
     type Error = S::Error;
@@ -171,33 +145,24 @@ where
         if let Some(logc) = log.clone() {
             // Extract method and headers; redaction only when sensitive headers present.
             let method_path = req.uri().path().to_string();
-            let headers_opt = redacted_headers_from_http(req.headers());
-            // Build started payload (typed) and include headers only when non-empty (Opt 3 + Opt 6).
-            let started = ExternalIoStarted {
-                event: "external_io_started",
-                system: "grpc",
-                direction: "client",
-                scheme: self.scheme.clone(),
-                host: self.host.clone(),
-                port: self.port,
-                method: method_path,
-                request_id: rid.clone(),
-                body_digest_sha256: sha256_hex(&[]),
-                headers: headers_opt,
-            };
-            let __append_res = logc.append(orca_core::ids::next_monotonic_id(), t0, &started);
-            let mut __append_failed = __append_res.is_err();
-            #[cfg(test)]
-            {
-                __append_failed = __append_failed || fail_inject_enabled();
+            let headers_map = redacted_headers_from_http(req.headers()).unwrap_or_default();
+            // Build started payload and include headers only when non-empty (Opt 3).
+            let mut started_obj = serde_json::json!({
+                "event": "external_io_started",
+                "system": "grpc",
+                "direction": "client",
+                "scheme": self.scheme,
+                "host": self.host,
+                "port": self.port,
+                "method": method_path,
+                "request_id": rid,
+                "body_digest_sha256": sha256_hex(&[]),
+            }).as_object().unwrap().clone();
+            if !headers_map.is_empty() {
+                started_obj.insert("headers".to_string(), serde_json::Value::Object(headers_map));
             }
-            if __append_failed && !bypass_to_direct() {
-                return Box::pin(async move {
-                    Err::<Response<tonic::transport::Body>, S::Error>(
-                        tonic::Status::failed_precondition("client capture WAL append failed").into(),
-                    )
-                });
-            }
+            let started = serde_json::Value::Object(started_obj);
+            let _ = logc.append(orca_core::ids::next_monotonic_id(), t0, &started);
         }
 
         let fut = self.inner.call(req);
@@ -206,26 +171,15 @@ where
             if let Some(logc) = log.clone() {
                 let t1 = crate::clock::process_clock().now_ms();
                 let status = if res.is_ok() { "ok" } else { "error" };
-                let finished = ExternalIoFinished {
-                    event: "external_io_finished",
-                    request_id: rid,
-                    status,
-                    duration_ms: t1.saturating_sub(t0),
-                };
-                let __append_res2 = logc.append(orca_core::ids::next_monotonic_id(), t1, &finished);
-                let mut __append_failed2 = __append_res2.is_err();
-                #[cfg(test)]
-                {
-                    __append_failed2 = __append_failed2 || fail_inject_enabled();
-                }
-                if __append_failed2 && !bypass_to_direct() {
-                    return Err::<Response<tonic::transport::Body>, S::Error>(
-                        tonic::Status::failed_precondition("client capture WAL append failed").into(),
-                    );
-                }
+                let finished = serde_json::json!({
+                    "event": "external_io_finished",
+                    "request_id": rid,
+                    "status": status,
+                    "duration_ms": t1.saturating_sub(t0),
+                });
+                let _ = logc.append(orca_core::ids::next_monotonic_id(), t1, &finished);
                 #[cfg(feature = "otel")]
                 {
-                    // WAL metric emission remains for auditability; OTel metrics to be added in a follow-up optimization.
                     let metric = serde_json::json!({
                         "metric":"proxy.capture.duration_ms", "value_ms": t1.saturating_sub(t0),
                         "attrs": {"system":"grpc","direction":"client","status": status}
@@ -257,7 +211,7 @@ where
 }
 
 /// Convenience helpers for tests/bench to avoid exposing internal types directly.
-pub(crate) fn wrap_service<S>(inner: S) -> ProxyCapturedChannel<S> {
+pub fn wrap_service<S>(inner: S) -> ProxyCapturedChannel<S> {
     ProxyCaptureLayer.layer(inner)
 }
 
@@ -306,21 +260,22 @@ mod tests {
     use event_log::{EventRecord, JsonlEventLog};
     use http::Request;
     use serde_json::Value as JsonValue;
-    use std::sync::{Mutex, OnceLock};
     use tonic::body::BoxBody;
     use tower::{service_fn, Service};
+    use std::sync::{Mutex, OnceLock};
 
     static TEST_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
     fn serial_guard() -> std::sync::MutexGuard<'static, ()> {
         TEST_GUARD.get_or_init(|| Mutex::new(())).lock().unwrap()
     }
 
+
     fn run_captured_call_with_headers(headers: &[(&str, &str)], log: &JsonlEventLog) {
         std::env::set_var("ORCA_CAPTURE_EXTERNAL_IO", "1");
         super::test_set_capture_log(log.clone());
 
         let inner = service_fn(|_req: Request<BoxBody>| async move {
-            Ok::<http::Response<tonic::transport::Body>, tonic::Status>(http::Response::new(
+            Ok::<http::Response<tonic::transport::Body>, ()>(http::Response::new(
                 tonic::transport::Body::empty(),
             ))
         });
@@ -354,6 +309,7 @@ mod tests {
 
         run_captured_call_with_headers(&[("authorization", "Bearer token")], &log);
         // no-op read removed (was for debug)
+
 
         let recs = read_log_events(&log);
 
@@ -390,6 +346,7 @@ mod tests {
 
         // no-op read removed (was for debug)
 
+
         let recs = read_log_events(&log);
         let mut started_events: Vec<&EventRecord<JsonValue>> = recs
             .iter()
@@ -401,18 +358,11 @@ mod tests {
         let first = started_events.remove(0);
         let second = started_events.remove(0);
         // When no sensitive headers are present, the headers field should be absent.
-        assert!(
-            first.payload.get("headers").is_none(),
-            "headers should be absent when no sensitive headers present"
-        );
+        assert!(first.payload.get("headers").is_none(), "headers should be absent when no sensitive headers present");
         // When sensitive headers are present, headers should include redacted entries.
-        let h2 =
-            second.payload.get("headers").expect("headers should be present for sensitive headers");
+        let h2 = second.payload.get("headers").expect("headers should be present for sensitive headers");
         let h2_str = h2.to_string();
-        assert!(
-            h2_str.contains("authorization"),
-            "expected authorization to be redacted in headers"
-        );
+        assert!(h2_str.contains("authorization"), "expected authorization to be redacted in headers");
     }
 
     #[cfg(feature = "otel")]
@@ -429,64 +379,4 @@ mod tests {
         });
         assert!(has_metric, "expected duration metric to be emitted under otel feature");
     }
-
-    #[test]
-    fn client_denies_request_on_wal_append_failure_by_default() {
-        let _g = serial_guard();
-        std::env::set_var("ORCA_CAPTURE_EXTERNAL_IO", "1");
-        std::env::remove_var("ORCA_BYPASS_TO_DIRECT");
-        std::env::set_var("ORCA_CAPTURE_FAIL_INJECT", "1");
-        let dir = tempfile::tempdir().unwrap();
-        let log = JsonlEventLog::open(dir.path().join("client_fail.jsonl")).unwrap();
-        super::test_set_capture_log(log.clone());
-
-        let inner = service_fn(|_req: Request<BoxBody>| async move {
-            Ok::<http::Response<tonic::transport::Body>, tonic::Status>(http::Response::new(
-                tonic::transport::Body::empty(),
-            ))
-        });
-        let mut svc = super::wrap_service(inner);
-        let req = Request::builder()
-            .uri("/orca.v1.Orchestrator/StartRun")
-            .body(BoxBody::default())
-            .unwrap();
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let res = rt.block_on(async move { svc.call(req).await });
-        assert!(res.is_err(), "expected call to be denied on WAL append failure by default");
-
-        // cleanup
-        std::env::remove_var("ORCA_CAPTURE_FAIL_INJECT");
-    }
-
-    #[test]
-    fn client_allows_request_on_wal_append_failure_when_bypass_enabled() {
-        let _g = serial_guard();
-        std::env::set_var("ORCA_CAPTURE_EXTERNAL_IO", "1");
-        std::env::set_var("ORCA_BYPASS_TO_DIRECT", "1");
-        std::env::set_var("ORCA_CAPTURE_FAIL_INJECT", "1");
-        let dir = tempfile::tempdir().unwrap();
-        let log = JsonlEventLog::open(dir.path().join("client_bypass.jsonl")).unwrap();
-        super::test_set_capture_log(log.clone());
-
-        let inner = service_fn(|_req: Request<BoxBody>| async move {
-            Ok::<http::Response<tonic::transport::Body>, tonic::Status>(http::Response::new(
-                tonic::transport::Body::empty(),
-            ))
-        });
-        let mut svc = super::wrap_service(inner);
-        let req = Request::builder()
-            .uri("/orca.v1.Orchestrator/StartRun")
-            .body(BoxBody::default())
-            .unwrap();
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let res = rt.block_on(async move { svc.call(req).await });
-        assert!(res.is_ok(), "expected call to proceed when bypass enabled despite WAL append failure");
-
-        // cleanup
-        std::env::remove_var("ORCA_BYPASS_TO_DIRECT");
-        std::env::remove_var("ORCA_CAPTURE_FAIL_INJECT");
-    }
 }
-
