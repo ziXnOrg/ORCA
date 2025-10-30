@@ -1,3 +1,37 @@
+- Date (UTC): 2025-10-30 06:53
+- Area: Runtime|Proxy|Performance
+- Context/Goal: PERFORMANCE RESEARCH — client capture benchmarks + optimization plan (Issue #84). Define budgets, attempt baseline measurement, and produce a concrete optimization plan with acceptance gates. No code changes in this phase.
+- Actions (read-only):
+  - Defined budgets: (1) Added RTT p95 ≤ 2 ms for unary RPC with client capture ON vs OFF; (2) Memory: no unbounded growth; ≤64 KiB incremental buffering per request over payload; (3) Metrics emission overhead ≤100 µs p95 per op; (4) Document OFF vs ON measurements.
+  - Attempted to run: cargo bench -p orchestrator --bench capture_overhead --features capture -- --noplot --quiet
+  - Result: compile error in bench referencing orchestrator::proxy::set_capture_log and orchestrator::proxy::ProxyCaptureLayer (not found). Root cause: the bench is built as an external consumer of the orchestrator crate and cannot see these items as currently exported; requires either re-export at crate root or bench adjustment. No production code was executed.
+  - Planned microbenchmarks and profiling:
+    1) CAPTURE_LOG access: RwLock read vs cached Arc sink at channel build time (or ArcSwapOption); Criterion microbench; acceptance: p95 improvement ≥20% on read path, and end-to-end p95 improvement ≥10% for grpc_client_round_trip_on.
+    2) Payload construction: typed ExternalIo* structs vs serde_json! maps; acceptance: ≥30% fewer allocs and ≥10% CPU reduction in payload build microbench; stable key order guaranteed.
+    3) Future projection: replace unsafe pin in CapturedFuture with pin-project-lite; acceptance: ≤1% regression (or improvement) in microbench that polls a wrapped future; safety gain preferred.
+    4) Metrics emission: use telemetry histogram (orca.proxy.capture.duration_ms) under feature=otel; acceptance: ≤100 µs p95 per record with 3 low-cardinality attrs; OFF path strictly zero overhead.
+    5) Span overhead: add client-call span (feature=otel); acceptance: ≤200 µs p95 incremental vs no span.
+- Results so far:
+  - Bench run blocked by compile error in benches/capture_overhead.rs due to missing public visibility of proxy helpers for an external consumer path. No runtime measurements collected in this phase.
+  - Code inspection confirms memory bound behavior: sha256_hex processes input in 64 KiB chunks (constant); no unbounded growth observed; per-request incremental buffering bounded by 64 KiB over payload for digesting.
+- Performance budget validation (status):
+  - Added RTT p95 ≤ 2 ms: Pending measurement (blocked by bench compile).
+  - Memory bounds: PASS by inspection (64 KiB chunked digest; no buffered body in client path currently).
+  - Metrics ≤100 µs p95: Pending measurement (blocked until instrumentation wired under otel in REFACTOR).
+- Optimization plan (prioritized with gates):
+  1) Lock-free read path for capture sink: cache Arc<JsonlEventLog> in ProxyCapturedChannel builder (or ArcSwapOption). Gate: ≥10% p95 reduction for grpc_client_round_trip_on vs current RwLock-based path; zero regression when OFF.
+  2) Remove unsafe in CapturedFuture via pin-project-lite. Gate: ≤1% overhead vs current; safety improvement required.
+  3) Conditional headers emission: only include when redaction returns Some; avoid empty object. Gate: measurable reduction in payload size; ≥0.1 ms p95 reduction if headers absent; no behavior change.
+  4) Fail-closed on WAL append errors with ORCA_BYPASS_TO_DIRECT override + audit. Gate: normal path overhead ≤50 µs p95; correct deny-by-default semantics verified by tests.
+  5) OTel span + histogram: feature-gated under otel with low-cardinality attributes; Gate: span ≤200 µs p95; histogram ≤100 µs p95 per record.
+  6) Typed payloads for ExternalIoStarted/Finished to ensure stable key order and fewer allocs. Gate: ≥30% fewer allocs and ≥10% CPU reduction in payload construction microbench.
+  7) Narrow test-only API surface behind cfg(any(test, bench)) or crate-private; no runtime KPI impact; aligns with API hygiene.
+- Follow-ups (REFACTOR tasks to propose):
+  - Minimal unblock for benches: re-export proxy::{ProxyCaptureLayer, set_capture_log} at crate root (lib.rs), or adjust benches to use builder exposed API. No functional changes.
+  - Implement items (1)–(6) with minimal diffs; add microbenches; wire telemetry under feature=otel; keep fail-closed defaults; remove unsafe.
+  - Run benches and record OFF/ON p50/p95/p99 in dev_log with seeds and environment.
+
+
 - Date (UTC): 2025-10-30 12:38
 - Area: Runtime|Proxy|Performance|Observability
 - Context/Goal: PRE-REFACTOR RESEARCH — client-side capture (Issue #84). Review GREEN impl for cache locality, contention, memory reuse, telemetry coverage; identify concrete enrichment actions and plan next phases.
