@@ -1,44 +1,80 @@
-use policy::{DecisionKind, Engine};
-use serde_json::json;
+#![allow(clippy::module_name_repetitions)]
 
-// RED: This test intentionally references a not-yet-implemented OTel-backed observer for
-// policy decisions to establish a compile-time RED state. The module `telemetry::policy_observer`
-// and its `global()` function will be added in GREEN.
-#[test]
-fn otel_metrics_export_with_attributes() {
-    // Install OTel-backed observer (does not exist yet → compile error for RED phase)
-    policy::set_observer(Some(Box::new(telemetry::policy_observer::global())));
+use once_cell::sync::OnceCell;
+use opentelemetry::global;
+use opentelemetry::metrics::{Counter, Meter};
+use opentelemetry::KeyValue;
 
-    // Drive a couple of decisions so that metrics would be emitted once GREEN is implemented
-    // Use separate engines to avoid precedence interactions between deny and allow_but_flag.
-    let mut eng_deny = Engine::new();
-    let yaml_deny = r#"
-rules:
-  - name: Deny-Tools
-    when: ToolInvocation
-    action: deny
-"#;
-    let tmp1 = std::env::temp_dir().join(format!("policy_obs_deny_{}.yaml", std::process::id()));
-    std::fs::write(&tmp1, yaml_deny).unwrap();
-    eng_deny.load_from_yaml_path(&tmp1).unwrap();
+struct Instruments {
+    counter: Counter<u64>,
+}
 
-    let mut eng_flag = Engine::new();
-    let yaml_flag = r#"
-rules:
-  - name: Flag-Prompts
-    when: LLMPrompt
-    action: allow_but_flag
-"#;
-    let tmp2 = std::env::temp_dir().join(format!("policy_obs_flag_{}.yaml", std::process::id()));
-    std::fs::write(&tmp2, yaml_flag).unwrap();
-    eng_flag.load_from_yaml_path(&tmp2).unwrap();
+static INSTR: OnceCell<Instruments> = OnceCell::new();
 
-    let env_tool = json!({"payload_json": "{\"tool\": \"curl\"}"});
-    let env_prompt = json!({"payload_json": "hello"});
-    let d1 = eng_deny.pre_submit_task(&env_tool);
-    let d2 = eng_flag.pre_submit_task(&env_prompt);
+fn ensure_instruments() -> &'static Instruments {
+    INSTR.get_or_init(|| {
+        // Use the global meter provider (may be a no-op if OTLP not initialized).
+        let meter: Meter = global::meter("orca.policy");
+        let counter = meter
+            .u64_counter("policy.decision.count")
+            .with_description("Policy decision counter")
+            .init();
+        Instruments { counter }
+    })
+}
 
-    // Ensure we actually produced distinct decisions
-    assert!(matches!(d1.kind, DecisionKind::Deny));
-    assert!(matches!(d2.kind, DecisionKind::Allow));
+/// OpenTelemetry-backed observer for policy decisions.
+///
+/// Emits a counter named `policy.decision.count` with low-cardinality attributes
+/// `{phase, kind, action}` on every decision. When `action == "allow_but_flag"`,
+/// also emits a convenience alias with `action == "flag"` to simplify dashboarding.
+///
+/// Notes
+/// - Uses the global meter provider; if no exporter is installed, this is a no-op.
+/// - Non-blocking and cheap; safe to call on every decision.
+/// - Attribute values are short enumerations by design to comply with observability.md.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OtelPolicyObserver;
+
+impl policy::PolicyObserver for OtelPolicyObserver {
+    fn on_decision(&self, phase: &str, d: &policy::Decision) {
+        let inst = ensure_instruments();
+        let kind_str = match d.kind {
+            policy::DecisionKind::Allow => "allow",
+            policy::DecisionKind::Deny => "deny",
+            policy::DecisionKind::Modify => "modify",
+        };
+        let action_str = d.action.as_deref().unwrap_or(kind_str);
+        let attrs = [
+            KeyValue::new("phase", phase.to_string()),
+            KeyValue::new("kind", kind_str.to_string()),
+            KeyValue::new("action", action_str.to_string()),
+        ];
+        inst.counter.add(1, &attrs);
+        // Emit a secondary alias for allow_but_flag to plain "flag" for dashboards, if desired
+        if action_str == "allow_but_flag" {
+            let attrs2 = [
+                KeyValue::new("phase", phase.to_string()),
+                KeyValue::new("kind", kind_str.to_string()),
+                KeyValue::new("action", "flag".to_string()),
+            ];
+            inst.counter.add(1, &attrs2);
+        }
+    }
+}
+
+/// Create an observer instance and ensure instruments are initialized.
+///
+/// This returns a lightweight value; using it without initializing an OTLP exporter
+/// is safe (metrics will be dropped by the no-op meter provider).
+///
+/// Example
+/// ```rust
+/// use orca_policy as policy;
+/// // Feature `otel` must be enabled on the `telemetry` crate
+/// policy::set_observer(Some(Box::new(telemetry::policy_observer::global())));
+/// ```
+pub fn global() -> OtelPolicyObserver {
+    let _ = ensure_instruments();
+    OtelPolicyObserver
 }

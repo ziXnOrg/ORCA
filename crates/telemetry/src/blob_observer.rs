@@ -25,8 +25,7 @@ static CLEAN_ACC: AtomicU64 = AtomicU64::new(0);
 
 fn ensure_instruments() -> &'static Instruments {
     INSTR.get_or_init(|| {
-        // Ensure a meter provider is set (reuse budget init which sets provider via env)
-        let _ = crate::metrics::init_budget_instruments();
+        // Use the global meter provider (may be a no-op if OTLP not initialized).
         let meter: Meter = global::meter("orca.blob");
         let put_bytes = meter
             .u64_counter("blob.put.bytes")

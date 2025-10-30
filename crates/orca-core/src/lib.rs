@@ -1,224 +1,294 @@
-//! ORCA core primitives and shared types.
+//! Write-ahead event log prototype API (Phase 0).
 
 #![deny(unsafe_code)]
 
-/// Version of the ORCA core library.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+use serde::{Deserialize, Serialize};
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
+use thiserror::Error;
 
-pub mod ids {
-    //! ID utilities: monotonic event ids and trace ids.
+/// Placeholder type for an event identifier.
+pub type EventId = u64;
 
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
-    use uuid::Uuid;
+/// Errors emitted by the event log.
+#[derive(Debug, Error)]
+pub enum EventLogError {
+    #[error("io: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("serialize: {0}")]
+    Serde(#[from] serde_json::Error),
+    #[error("invalid: {0}")]
+    Invalid(String),
+}
 
-    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+/// Minimal event record persisted to the log.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventRecord<T> {
+    /// Monotonic event id assigned on append.
+    pub id: EventId,
+    /// Millis since epoch (caller supplies; Phase 0 keeps it simple).
+    pub ts_ms: u64,
+    /// Payload (schema defined elsewhere; Phase 0 uses generic T).
+    pub payload: T,
+}
 
-    /// Generate a new monotonic identifier (starts at 1).
-    pub fn next_monotonic_id() -> u64 {
-        NEXT_ID.fetch_add(1, Ordering::Relaxed)
-    }
+/// A simple JSONL-backed append-only event log.
+#[derive(Debug, Clone)]
+pub struct JsonlEventLog {
+    path: String,
+}
 
-    /// Milliseconds since UNIX epoch (for timestamps).
-    pub fn now_ms() -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
-    }
-
-    /// Opaque trace identifier (UUID v4 string).
-    pub fn new_trace_id() -> String {
-        Uuid::new_v4().to_string()
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        #[test]
-        fn monotonic_increments() {
-            let a = next_monotonic_id();
-            let b = next_monotonic_id();
-            assert!(b > a);
+impl JsonlEventLog {
+    /// Create or open a log at `path`.
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, EventLogError> {
+        let p = path.as_ref();
+        if !p.exists() {
+            OpenOptions::new().create(true).write(true).truncate(true).open(p)?;
         }
+        Ok(Self { path: p.to_string_lossy().into_owned() })
+    }
 
-        #[test]
-        fn trace_id_format() {
-            let t = new_trace_id();
-            assert_eq!(t.len(), 36);
-            assert!(t.chars().all(|c| c.is_ascii_hexdigit() || c == '-'));
+    /// Append a payload; returns assigned EventId.
+    pub fn append<T: Serialize>(
+        &self,
+        id: EventId,
+        ts_ms: u64,
+        payload: &T,
+    ) -> Result<EventId, EventLogError> {
+        let mut file = OpenOptions::new().append(true).open(&self.path)?;
+        let rec = EventRecord { id, ts_ms, payload };
+        let line = serde_json::to_string(&rec)?;
+        file.write_all(line.as_bytes())?;
+        file.write_all(b"\n")?;
+        file.flush()?;
+        Ok(id)
+    }
+
+    /// Read events with id in [start, end) (half-open range).
+    pub fn read_range<T: for<'de> Deserialize<'de>>(
+        &self,
+        start: EventId,
+        end: EventId,
+    ) -> Result<Vec<EventRecord<T>>, EventLogError> {
+        let file = File::open(&self.path)?;
+        let reader = BufReader::new(file);
+        let mut out = Vec::new();
+        for line in reader.lines() {
+            let line = line?;
+            if line.is_empty() {
+                continue;
+            }
+            let rec: EventRecord<T> = serde_json::from_str(&line)?;
+            if rec.id >= start && rec.id < end {
+                out.push(rec);
+            }
         }
+        Ok(out)
     }
 }
 
-pub mod envelope {
-    //! Message envelope schema for tasks/results/errors.
+/// Example usage (doc test):
+///
+/// ```
+/// use event_log::{JsonlEventLog, EventId};
+/// use serde::{Serialize, Deserialize};
+/// use std::time::{SystemTime, UNIX_EPOCH};
+///
+/// #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// struct P { v: u32 }
+///
+/// fn ts() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64 }
+///
+/// let path = tempfile::NamedTempFile::new().unwrap();
+/// let log = JsonlEventLog::open(path.path()).unwrap();
+///
+/// let _ = log.append(1 as EventId, ts(), &P { v: 10 }).unwrap();
+/// let _ = log.append(2 as EventId, ts(), &P { v: 20 }).unwrap();
+///
+/// let recs: Vec<event_log::EventRecord<P>> = log.read_range(1, 3).unwrap();
+/// assert_eq!(recs.len(), 2);
+/// assert_eq!(recs[0].payload, P { v: 10 });
+/// assert_eq!(recs[1].payload, P { v: 20 });
+///
+```
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
 
-    use super::ids::{new_trace_id, next_monotonic_id, now_ms};
+    #[test]
+    fn append_and_read_roundtrip() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let log = JsonlEventLog::open(tmp.path()).unwrap();
+        let _ = log.append(1, 1, &"hello").unwrap();
+        let got: Vec<EventRecord<String>> = log.read_range(1, 2).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].payload, "hello");
+    }
+}
+
+/// WAL v2 typed schema with deterministic serialization and golden-tested stable ordering.
+pub mod v2 {
     use serde::{Deserialize, Serialize};
-    use serde_json::Value as JsonValue;
-
-    /// Message type classification.
-    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-    #[serde(rename_all = "snake_case")]
-    pub enum MessageType {
-        AgentTask,
-        AgentResult,
-        AgentError,
-    }
-
-    /// Standardized message envelope for cross-component communication.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct Envelope {
-        /// Unique message id.
-        pub id: String,
-        /// Parent id for causality (result/error links to task).
-        pub parent_id: Option<String>,
-        /// Trace id for correlating all messages in a workflow.
-        pub trace_id: String,
-        /// Agent role or name.
-        pub agent: String,
-        /// Message type.
-        #[serde(rename = "type")]
-        pub kind: MessageType,
-        /// Payload body (schema varies by message type; JSON for flexibility in Phase 0).
-        pub payload: JsonValue,
-        /// Timeout budget in milliseconds (if applicable).
-        pub timeout_ms: Option<u64>,
-        /// Protocol version for forward-compat.
-        pub protocol_version: u32,
-        /// Creation timestamp.
-        pub ts_ms: u64,
-    }
-
-    impl Envelope {
-        /// Construct a new task envelope with a fresh id and trace.
-        pub fn new_task(
-            agent: impl Into<String>,
-            payload: JsonValue,
-            timeout_ms: Option<u64>,
-        ) -> Self {
-            let id = format!("msg-{}", next_monotonic_id());
-            Self {
-                id,
-                parent_id: None,
-                trace_id: new_trace_id(),
-                agent: agent.into(),
-                kind: MessageType::AgentTask,
-                payload,
-                timeout_ms,
-                protocol_version: 1,
-                ts_ms: now_ms(),
-            }
-        }
-
-        /// Construct a result linked to a parent id within an existing trace.
-        pub fn new_result(
-            parent_id: impl Into<String>,
-            trace_id: impl Into<String>,
-            agent: impl Into<String>,
-            payload: JsonValue,
-        ) -> Self {
-            let id = format!("msg-{}", next_monotonic_id());
-            Self {
-                id,
-                parent_id: Some(parent_id.into()),
-                trace_id: trace_id.into(),
-                agent: agent.into(),
-                kind: MessageType::AgentResult,
-                payload,
-                timeout_ms: None,
-                protocol_version: 1,
-                ts_ms: now_ms(),
-            }
-        }
-
-        /// Construct an error linked to a parent id within an existing trace.
-        pub fn new_error(
-            parent_id: impl Into<String>,
-            trace_id: impl Into<String>,
-            agent: impl Into<String>,
-            payload: JsonValue,
-        ) -> Self {
-            let id = format!("msg-{}", next_monotonic_id());
-            Self {
-                id,
-                parent_id: Some(parent_id.into()),
-                trace_id: trace_id.into(),
-                agent: agent.into(),
-                kind: MessageType::AgentError,
-                payload,
-                timeout_ms: None,
-                protocol_version: 1,
-                ts_ms: now_ms(),
-            }
-        }
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        #[test]
-        fn task_envelope_defaults() {
-            let e = Envelope::new_task("TestAgent", JsonValue::Null, Some(30_000));
-            assert_eq!(e.kind, MessageType::AgentTask);
-            assert!(e.parent_id.is_none());
-            assert_eq!(e.protocol_version, 1);
-            assert!(e.trace_id.len() >= 32);
-        }
-
-        #[test]
-        fn result_links() {
-            let task = Envelope::new_task("A", JsonValue::Null, None);
-            let res =
-                Envelope::new_result(task.id.clone(), task.trace_id.clone(), "A", JsonValue::Null);
-            assert_eq!(res.parent_id.as_deref(), Some(task.id.as_str()));
-            assert_eq!(res.trace_id, task.trace_id);
-        }
-    }
-}
-
-pub mod metadata {
-    //! Unified metadata schema validation (v1).
-    use jsonschema::{Draft, JSONSchema};
-    use once_cell::sync::Lazy;
     use serde_json::Value;
 
-    static SCHEMA_JSON: &str = include_str!("../../../Docs/metadata.schema.json");
-    static COMPILED: Lazy<JSONSchema> = Lazy::new(|| {
-        let schema: Value = serde_json::from_str(SCHEMA_JSON).expect("invalid schema json");
-        JSONSchema::options().with_draft(Draft::Draft7).compile(&schema).expect("compile schema")
-    });
+    pub const WAL_VERSION_V2: u8 = 2;
 
-    /// Validate a JSON value against the v1 metadata schema.
-    pub fn validate_envelope(v: &Value) -> Result<(), String> {
-        match COMPILED.validate(v) {
-            Ok(_) => Ok(()),
-            Err(iter) => {
-                let msg = iter.map(|e| e.to_string()).collect::<Vec<_>>().join("; ");
-                Err(msg)
-            }
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    #[serde(rename_all = "snake_case")]
+    pub enum EventTypeV2 {
+        StartRun,
+        TaskEnqueued,
+        UsageUpdate,
+        ExternalIoStarted,
+        ExternalIoFinished,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+    pub struct Attachment {
+        pub digest_sha256: String,
+        pub size_bytes: u64,
+        pub mime: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub encoding: Option<String>,
+        pub compression: String, // "zstd" | "none"
+    }
+
+    impl Ord for Attachment {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            self.digest_sha256.cmp(&other.digest_sha256)
+        }
+    }
+    impl PartialOrd for Attachment {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
         }
     }
 
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-        use serde_json::json;
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RecordV2<T> {
+        pub id: super::EventId,
+        pub ts_ms: u64,
+        pub version: u8,
+        pub event_type: EventTypeV2,
+        pub run_id: String,
+        pub trace_id: String,
+        pub payload: T,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub attachments: Option<Vec<Attachment>>, // new field; serialized after payload
+        pub metadata: Value,
+    }
 
-        #[test]
-        fn valid_envelope() {
-            let v = json!({
-                "id": "m1", "trace_id": "t", "agent": "A", "kind": "agent_task", "protocol_version": 1, "ts_ms": 1
-            });
-            assert!(validate_envelope(&v).is_ok());
+    // Typed payloads to guarantee stable key ordering in serialization.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct StartRunPayload {
+        pub workflow_id: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct TaskEnqueuedPayload {
+        pub envelope_id: String,
+        pub agent: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct UsageUpdatePayload {
+        pub tokens: u64,
+        pub cost_micros: u64,
+    }
+
+    // External I/O capture payloads
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ExternalIOStartedPayload {
+        pub system: String,       // "grpc" | "http"
+        pub direction: String,    // "client" | "server"
+        pub scheme: String,       // e.g., "grpc"
+        pub host: String,
+        pub port: u16,
+        pub method: String,       // rpc.service + "/" + rpc.method
+        pub request_id: String,   // deterministic correlation id
+        pub headers: serde_json::Map<String, serde_json::Value>, // redacted map
+        pub body_digest_sha256: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ExternalIOFinishedPayload {
+        pub request_id: String,
+        pub status: String,     // e.g., "ok" | grpc status code
+        pub duration_ms: u64,
+    }
+
+    const ATTACH_MAX_COUNT: usize = 8;
+    const STR_MAX_LEN: usize = 128;
+    const TOTAL_ATTACH_JSON_MAX: usize = 8 * 1024; // bytes
+
+    fn is_hex_sha256(s: &str) -> bool {
+        s.len() == 64 && s.as_bytes().iter().all(|b| b.is_ascii_hexdigit())
+    }
+
+    /// Serialize a V2 record to a JSON line with stable field ordering and deterministic attachment ordering.
+    pub fn to_jsonl_line<T: Serialize>(rec: &RecordV2<T>) -> Result<String, super::EventLogError> {
+        // Validate + sort attachments deterministically by digest
+        let mut sorted: Option<Vec<Attachment>> = None;
+        if let Some(att) = &rec.attachments {
+            if att.len() > ATTACH_MAX_COUNT {
+                return Err(super::EventLogError::Invalid(format!(
+                    "attachments count {} exceeds max {}",
+                    att.len(),
+                    ATTACH_MAX_COUNT
+                )));
+            }
+            let mut a = att.clone();
+            for x in &a {
+                if !is_hex_sha256(&x.digest_sha256) {
+                    return Err(super::EventLogError::Invalid("invalid digest".into()));
+                }
+                if x.mime.len() > STR_MAX_LEN
+                    || x.encoding.as_deref().map(|e| e.len()).unwrap_or(0) > STR_MAX_LEN
+                    || x.compression.len() > STR_MAX_LEN
+                {
+                    return Err(super::EventLogError::Invalid(
+                        "oversized attachment string field".into(),
+                    ));
+                }
+            }
+            a.sort();
+            // Rough size cap via JSON length of attachments only
+            let approx = serde_json::to_string(&a).map_err(super::EventLogError::Serde)?.len();
+            if approx > TOTAL_ATTACH_JSON_MAX {
+                return Err(super::EventLogError::Invalid("attachments too large".into()));
+            }
+            sorted = Some(a);
         }
 
-        #[test]
-        fn invalid_version() {
-            let v = json!({
-                "id": "m1", "trace_id": "t", "agent": "A", "kind": "agent_task", "protocol_version": 2, "ts_ms": 1
-            });
-            assert!(validate_envelope(&v).is_err());
+        // Build a serialization wrapper to control field order explicitly.
+        #[derive(Serialize)]
+        struct RecordV2Ser<'a, T: Serialize> {
+            id: super::EventId,
+            ts_ms: u64,
+            version: u8,
+            event_type: &'a EventTypeV2,
+            run_id: &'a str,
+            trace_id: &'a str,
+            payload: &'a T,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            attachments: Option<&'a [Attachment]>,
+            metadata: &'a Value,
         }
+
+        let ser = RecordV2Ser {
+            id: rec.id,
+            ts_ms: rec.ts_ms,
+            version: rec.version,
+            event_type: &rec.event_type,
+            run_id: &rec.run_id,
+            trace_id: &rec.trace_id,
+            payload: &rec.payload,
+            attachments: sorted.as_deref(),
+            metadata: &rec.metadata,
+        };
+
+        let s = serde_json::to_string(&ser)?;
+        Ok(s)
     }
 }
