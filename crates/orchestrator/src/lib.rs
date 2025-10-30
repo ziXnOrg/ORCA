@@ -27,8 +27,7 @@ pub mod proxy;
 pub use proxy::redacted_headers_from_http;
 
 #[cfg(feature = "capture")]
-pub use proxy::{ProxyCaptureLayer, set_capture_log};
-
+pub use proxy::{set_capture_log, ProxyCaptureLayer};
 
 use orca_v1::{
     orchestrator_server::{Orchestrator, OrchestratorServer},

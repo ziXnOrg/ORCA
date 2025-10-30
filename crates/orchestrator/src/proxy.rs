@@ -86,11 +86,11 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 // ===== Client-side capture layer (wired behind `capture` feature) =====
 use http::{Request, Response};
-use std::future::Future;
-use std::pin::Pin;
+#[cfg(feature = "capture")]
+use std::{future::Future, pin::Pin};
 use std::task::{Context, Poll};
-use tower::{Layer, Service};
 use tonic::body::BoxBody;
+use tower::{Layer, Service};
 
 #[derive(Debug, Clone, Default)]
 pub struct ProxyCaptureLayer;
@@ -108,6 +108,7 @@ impl<S> Layer<S> for ProxyCaptureLayer {
     }
 }
 
+#[cfg_attr(not(feature = "capture"), allow(dead_code))]
 #[derive(Debug, Clone)]
 pub struct ProxyCapturedChannel<S> {
     inner: S,
@@ -127,7 +128,8 @@ where
 {
     type Response = Response<tonic::transport::Body>;
     type Error = S::Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Response<tonic::transport::Body>, S::Error>> + Send>>;
+    type Future =
+        Pin<Box<dyn Future<Output = Result<Response<tonic::transport::Body>, S::Error>> + Send>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
@@ -136,6 +138,7 @@ where
     fn call(&mut self, req: Request<BoxBody>) -> Self::Future {
         // Only emit when runtime capture enabled and a log sink is configured.
         let log = if capture_enabled() { self.log.clone() } else { None };
+
         let t0 = crate::clock::process_clock().now_ms();
         let rid = format!("R{}", orca_core::ids::next_monotonic_id());
 
@@ -205,7 +208,7 @@ where
 
 /// Convenience helpers for tests/bench to avoid exposing internal types directly.
 pub fn wrap_service<S>(inner: S) -> ProxyCapturedChannel<S> {
-    ProxyCaptureLayer::default().layer(inner)
+    ProxyCaptureLayer.layer(inner)
 }
 
 pub fn test_set_capture_log(log: JsonlEventLog) {
@@ -236,20 +239,32 @@ impl CapturedChannelBuilder {
     }
 
     pub fn build(self) -> ProxyCapturedChannel<tonic::transport::Channel> {
-        ProxyCapturedChannel { inner: self.inner, scheme: self.scheme, host: self.host, port: self.port, log: capture_log_clone() }
+        ProxyCapturedChannel {
+            inner: self.inner,
+            scheme: self.scheme,
+            host: self.host,
+            port: self.port,
+            log: capture_log_clone(),
+        }
     }
 }
-
 
 // ===== Unit tests for client-side capture (feature-gated) =====
 #[cfg(all(test, feature = "capture"))]
 mod tests {
-    use super::*;
+
     use event_log::{EventRecord, JsonlEventLog};
     use http::Request;
     use serde_json::Value as JsonValue;
     use tonic::body::BoxBody;
     use tower::{service_fn, Service};
+    use std::sync::{Mutex, OnceLock};
+
+    static TEST_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+    fn serial_guard() -> std::sync::MutexGuard<'static, ()> {
+        TEST_GUARD.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+
 
     fn run_captured_call_with_headers(headers: &[(&str, &str)], log: &JsonlEventLog) {
         std::env::set_var("ORCA_CAPTURE_EXTERNAL_IO", "1");
@@ -267,7 +282,9 @@ mod tests {
             .body(BoxBody::default())
             .unwrap();
         for (k, v) in headers {
-            req.headers_mut().insert(*k, http::HeaderValue::from_str(v).unwrap());
+            let key = http::header::HeaderName::from_bytes(k.as_bytes()).unwrap();
+            let val = http::HeaderValue::from_bytes(v.as_bytes()).unwrap();
+            req.headers_mut().insert(key, val);
         }
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -282,21 +299,29 @@ mod tests {
 
     #[test]
     fn client_emits_external_io_started_and_finished_with_correlation() {
+        let _g = serial_guard();
         let dir = tempfile::tempdir().unwrap();
         let log = JsonlEventLog::open(dir.path().join("client.jsonl")).unwrap();
 
         run_captured_call_with_headers(&[("authorization", "Bearer token")], &log);
+        // no-op read removed (was for debug)
+
+
         let recs = read_log_events(&log);
 
         let started = recs
             .iter()
             .rev()
-            .find(|r| r.payload.get("event").and_then(|v| v.as_str()) == Some("external_io_started"))
+            .find(|r| {
+                r.payload.get("event").and_then(|v| v.as_str()) == Some("external_io_started")
+            })
             .expect("expected ExternalIoStarted");
         let finished = recs
             .iter()
             .rev()
-            .find(|r| r.payload.get("event").and_then(|v| v.as_str()) == Some("external_io_finished"))
+            .find(|r| {
+                r.payload.get("event").and_then(|v| v.as_str()) == Some("external_io_finished")
+            })
             .expect("expected ExternalIoFinished");
 
         let dir_s = started.payload.get("direction").and_then(|v| v.as_str()).unwrap();
@@ -308,16 +333,22 @@ mod tests {
 
     #[test]
     fn client_redaction_only_when_sensitive_headers_present() {
+        let _g = serial_guard();
         let dir = tempfile::tempdir().unwrap();
         let log = JsonlEventLog::open(dir.path().join("client2.jsonl")).unwrap();
 
         run_captured_call_with_headers(&[], &log);
         run_captured_call_with_headers(&[("authorization", "Bearer token")], &log);
 
+        // no-op read removed (was for debug)
+
+
         let recs = read_log_events(&log);
         let mut started_events: Vec<&EventRecord<JsonValue>> = recs
             .iter()
-            .filter(|r| r.payload.get("event").and_then(|v| v.as_str()) == Some("external_io_started"))
+            .filter(|r| {
+                r.payload.get("event").and_then(|v| v.as_str()) == Some("external_io_started")
+            })
             .collect();
         assert!(started_events.len() >= 2);
         let first = started_events.remove(0);
@@ -333,6 +364,7 @@ mod tests {
     #[cfg(feature = "otel")]
     #[test]
     fn metrics_stubs_feature_gated_and_emitted_under_otel() {
+        let _g = serial_guard();
         let dir = tempfile::tempdir().unwrap();
         let log = JsonlEventLog::open(dir.path().join("client3.jsonl")).unwrap();
 
