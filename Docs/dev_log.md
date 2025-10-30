@@ -1,3 +1,32 @@
+- Date (UTC): 2025-10-30 12:38
+- Area: Runtime|Proxy|Performance|Observability
+- Context/Goal: PRE-REFACTOR RESEARCH — client-side capture (Issue #84). Review GREEN impl for cache locality, contention, memory reuse, telemetry coverage; identify concrete enrichment actions and plan next phases.
+- Actions (read-only review):
+  - File: crates/orchestrator/src/proxy.rs — examined globals (CAPTURE_LOG OnceLock<RwLock<Option<JsonlEventLog>>>), ProxyCaptureLayer/ProxyCapturedChannel, CapturedFuture::poll, redaction helpers, sha256_hex, feature gating.
+  - Verified gating via env ORCA_CAPTURE_EXTERNAL_IO and cfg(feature="capture"); noted bypass_to_direct()/fail_inject_enabled() helpers exist.
+- Review notes:
+  - Correctness: started/finished events emitted and correlated via request_id; direction="client" + endpoint fields present. Body digest is stub (sha256_hex(&[])); planned for follow-up.
+  - Determinism: t0/t1 via process_clock(); ids via next_monotonic_id() — good. Dynamic serde_json! maps risk unstable field ordering vs typed v2 records.
+  - Contention: hot path reads CAPTURE_LOG through RwLock each call (read lock); set_capture_log acquires write lock. This adds synchronization to every request even when log rarely changes.
+  - Memory locality/allocs: per-call to_string() for method path and construction of JSON maps; repeated constants ("grpc","client") reallocated in json!; headers_map is built conditionally but call-site uses unwrap_or_default(), which inserts an empty object in payload even when none.
+  - Error handling: WAL append Results are ignored (let _ = ...); no fail-closed path or bypass toggle used here yet.
+  - Safety: CapturedFuture::poll uses unsafe get_unchecked_mut + Pin::new_unchecked; violates project preference to deny unsafe_code in libraries.
+  - Observability: finished event stores only ok/error; lacks grpc status code; metric stub appends a WAL "metric" record under otel but not a real histogram via telemetry crate; no span around client call.
+  - API surface: test helpers wrap_service() and test_set_capture_log() are pub (not cfg(test/bench)); risks exposing test-only API.
+- Concrete enrichment actions (prioritized):
+  1) Replace RwLock<Option<JsonlEventLog>> with lock-free read path (ArcSwapOption<JsonlEventLog>) for CAPTURE_LOG; keep ability to swap in tests/bench. Alternatives if avoiding new dep: cache Arc<JsonlEventLog> in ProxyCapturedChannel on first use or at builder time (read global once) and rely on env toggle for on/off.
+  2) Remove unsafe in CapturedFuture::poll via pin projection (pin-project-lite) or manual Pin-safe struct; align with rust-standards (deny unsafe in libs).
+  3) Conditional headers field: only include headers when redaction map is Some(..); avoid allocating/serializing empty object and adhere to spec.
+  4) Fail-closed by default on WAL append errors with explicit override (ORCA_BYPASS_TO_DIRECT=1) and log an audit error; add tests for both paths.
+  5) Observability polish: emit grpc status code (numeric) in finished event; add otel span around client call (feature=otel) with low-cardinality attrs {rpc.system, rpc.service, rpc.method, rpc.grpc.status_code}; move metrics to telemetry histogram (orca.proxy.capture.duration_ms), keep labels capped.
+  6) Align WAL with typed v2 schema for ExternalIoStarted/Finished payloads to guarantee stable key ordering and reduce dynamic map allocs.
+  7) Narrow public API: guard wrap_service() and test_set_capture_log() behind cfg(any(test, bench)) or make crate-private; keep builder as the ergonomic public entry.
+  8) Micro-allocs: reuse small static &strs where possible; avoid to_string() for constants; consider borrowing &str into typed payloads.
+- Follow-ups (next phases):
+  - PERFORMANCE RESEARCH: quantify RwLock read cost vs ArcSwapOption (microbench/minimal harness); measure capture ON vs OFF delta with current path; set/validate ≤2 ms p95 budget; plan span/hist overhead budget. Benchmarks: benches/capture_overhead.rs under --features capture.
+  - REFACTOR: implement items (1)–(7) with minimal diffs and tests; wire telemetry histogram and span; adopt fail-closed with bypass; remove unsafe; conditionally include headers field; optionally align to typed v2 events.
+
+
 - Date (UTC): 2025-10-30 12:10
 - Area: Runtime|Proxy|Tests|Docs
 - Context/Goal: GREEN — client-side capture wiring (Issue #84). Move capture-enabled tests to unit tests to unblock symbol-resolution issue; validate WAL emission + metrics under feature flags.
