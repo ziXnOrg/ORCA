@@ -26,6 +26,10 @@ pub mod proxy;
 // Re-export only stable helpers; client capture types live under orchestrator::proxy
 pub use proxy::redacted_headers_from_http;
 
+#[cfg(feature = "capture")]
+pub use proxy::{ProxyCaptureLayer, set_capture_log};
+
+
 use orca_v1::{
     orchestrator_server::{Orchestrator, OrchestratorServer},
     *,
