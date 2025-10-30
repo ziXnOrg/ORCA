@@ -141,7 +141,7 @@ fn bench_client_capture_overhead(c: &mut Criterion) {
                             JsonlEventLog::open(tmp.path().join("client_bench.jsonl")).unwrap();
                         orchestrator::proxy::set_capture_log(log);
                         let svc = tower::ServiceBuilder::new()
-                            .layer(orchestrator::proxy::ProxyCaptureLayer::default())
+                            .layer(orchestrator::proxy::ProxyCaptureLayer)
                             .service(channel.clone());
                         let mut client = OrchestratorClient::new(svc);
                         let _ = client
