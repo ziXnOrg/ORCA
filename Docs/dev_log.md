@@ -1,3 +1,15 @@
+- Date (UTC): 2025-10-31 03:00
+- Area: CI
+- Context/Goal: Document the CI failure investigation and fix for PR #85 (Issue #84)
+- Actions:
+  - Commit 2ba1e02: Applied cargo fmt --all to satisfy rustfmt format check
+  - Commit 67e6124: Removed .default() call on unit struct ProxyCaptureLayer in crates/orchestrator/benches/capture_overhead.rs:144 to satisfy clippy lint clippy::default_constructed_unit_structs
+- Results: All 4 CI jobs now pass (build-test ubuntu/macos, otel-and-replay smoke, coverage)
+- Diagnostics: Root cause was CI using stricter clippy flags (--all-targets --all-features) which includes benches, whereas local validation used --workspace which excludes benches by default
+- Decision(s): Use cargo clippy --all-targets --all-features -- -D warnings for local validation going forward to match CI behavior
+- Follow-ups: PR #85 ready for review and merge; await user approval before merging
+
+
 - Date (UTC): 2025-10-30 06:53
 - Area: Runtime|Proxy|Performance
 - Context/Goal: PERFORMANCE RESEARCH — client capture benchmarks + optimization plan (Issue #84). Define budgets, attempt baseline measurement, and produce a concrete optimization plan with acceptance gates. No code changes in this phase.
