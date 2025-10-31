@@ -1,3 +1,154 @@
+- Date (UTC): 2025-10-31 03:00
+- Area: CI
+- Context/Goal: Document the CI failure investigation and fix for PR #85 (Issue #84)
+- Actions:
+  - Commit 2ba1e02: Applied cargo fmt --all to satisfy rustfmt format check
+  - Commit 67e6124: Removed .default() call on unit struct ProxyCaptureLayer in crates/orchestrator/benches/capture_overhead.rs:144 to satisfy clippy lint clippy::default_constructed_unit_structs
+- Results: All 4 CI jobs now pass (build-test ubuntu/macos, otel-and-replay smoke, coverage)
+- Diagnostics: Root cause was CI using stricter clippy flags (--all-targets --all-features) which includes benches, whereas local validation used --workspace which excludes benches by default
+- Decision(s): Use cargo clippy --all-targets --all-features -- -D warnings for local validation going forward to match CI behavior
+- Follow-ups: PR #85 ready for review and merge; await user approval before merging
+
+
+- Date (UTC): 2025-10-30 06:53
+- Area: Runtime|Proxy|Performance
+- Context/Goal: PERFORMANCE RESEARCH — client capture benchmarks + optimization plan (Issue #84). Define budgets, attempt baseline measurement, and produce a concrete optimization plan with acceptance gates. No code changes in this phase.
+- Actions (read-only):
+  - Defined budgets: (1) Added RTT p95 ≤ 2 ms for unary RPC with client capture ON vs OFF; (2) Memory: no unbounded growth; ≤64 KiB incremental buffering per request over payload; (3) Metrics emission overhead ≤100 µs p95 per op; (4) Document OFF vs ON measurements.
+  - Attempted to run: cargo bench -p orchestrator --bench capture_overhead --features capture -- --noplot --quiet
+  - Result: compile error in bench referencing orchestrator::proxy::set_capture_log and orchestrator::proxy::ProxyCaptureLayer (not found). Root cause: the bench is built as an external consumer of the orchestrator crate and cannot see these items as currently exported; requires either re-export at crate root or bench adjustment. No production code was executed.
+  - Planned microbenchmarks and profiling:
+    1) CAPTURE_LOG access: RwLock read vs cached Arc sink at channel build time (or ArcSwapOption); Criterion microbench; acceptance: p95 improvement ≥20% on read path, and end-to-end p95 improvement ≥10% for grpc_client_round_trip_on.
+    2) Payload construction: typed ExternalIo* structs vs serde_json! maps; acceptance: ≥30% fewer allocs and ≥10% CPU reduction in payload build microbench; stable key order guaranteed.
+    3) Future projection: replace unsafe pin in CapturedFuture with pin-project-lite; acceptance: ≤1% regression (or improvement) in microbench that polls a wrapped future; safety gain preferred.
+    4) Metrics emission: use telemetry histogram (orca.proxy.capture.duration_ms) under feature=otel; acceptance: ≤100 µs p95 per record with 3 low-cardinality attrs; OFF path strictly zero overhead.
+    5) Span overhead: add client-call span (feature=otel); acceptance: ≤200 µs p95 incremental vs no span.
+- Results so far:
+  - Bench run blocked by compile error in benches/capture_overhead.rs due to missing public visibility of proxy helpers for an external consumer path. No runtime measurements collected in this phase.
+  - Code inspection confirms memory bound behavior: sha256_hex processes input in 64 KiB chunks (constant); no unbounded growth observed; per-request incremental buffering bounded by 64 KiB over payload for digesting.
+- Performance budget validation (status):
+  - Added RTT p95 ≤ 2 ms: Pending measurement (blocked by bench compile).
+  - Memory bounds: PASS by inspection (64 KiB chunked digest; no buffered body in client path currently).
+  - Metrics ≤100 µs p95: Pending measurement (blocked until instrumentation wired under otel in REFACTOR).
+- Optimization plan (prioritized with gates):
+  1) Lock-free read path for capture sink: cache Arc<JsonlEventLog> in ProxyCapturedChannel builder (or ArcSwapOption). Gate: ≥10% p95 reduction for grpc_client_round_trip_on vs current RwLock-based path; zero regression when OFF.
+  2) Remove unsafe in CapturedFuture via pin-project-lite. Gate: ≤1% overhead vs current; safety improvement required.
+  3) Conditional headers emission: only include when redaction returns Some; avoid empty object. Gate: measurable reduction in payload size; ≥0.1 ms p95 reduction if headers absent; no behavior change.
+  4) Fail-closed on WAL append errors with ORCA_BYPASS_TO_DIRECT override + audit. Gate: normal path overhead ≤50 µs p95; correct deny-by-default semantics verified by tests.
+  5) OTel span + histogram: feature-gated under otel with low-cardinality attributes; Gate: span ≤200 µs p95; histogram ≤100 µs p95 per record.
+  6) Typed payloads for ExternalIoStarted/Finished to ensure stable key order and fewer allocs. Gate: ≥30% fewer allocs and ≥10% CPU reduction in payload construction microbench.
+  7) Narrow test-only API surface behind cfg(any(test, bench)) or crate-private; no runtime KPI impact; aligns with API hygiene.
+- Follow-ups (REFACTOR tasks to propose):
+  - Minimal unblock for benches: re-export proxy::{ProxyCaptureLayer, set_capture_log} at crate root (lib.rs), or adjust benches to use builder exposed API. No functional changes.
+  - Implement items (1)–(6) with minimal diffs; add microbenches; wire telemetry under feature=otel; keep fail-closed defaults; remove unsafe.
+  - Run benches and record OFF/ON p50/p95/p99 in dev_log with seeds and environment.
+
+
+- Date (UTC): 2025-10-30 12:38
+- Area: Runtime|Proxy|Performance|Observability
+- Context/Goal: PRE-REFACTOR RESEARCH — client-side capture (Issue #84). Review GREEN impl for cache locality, contention, memory reuse, telemetry coverage; identify concrete enrichment actions and plan next phases.
+- Actions (read-only review):
+  - File: crates/orchestrator/src/proxy.rs — examined globals (CAPTURE_LOG OnceLock<RwLock<Option<JsonlEventLog>>>), ProxyCaptureLayer/ProxyCapturedChannel, CapturedFuture::poll, redaction helpers, sha256_hex, feature gating.
+  - Verified gating via env ORCA_CAPTURE_EXTERNAL_IO and cfg(feature="capture"); noted bypass_to_direct()/fail_inject_enabled() helpers exist.
+- Review notes:
+  - Correctness: started/finished events emitted and correlated via request_id; direction="client" + endpoint fields present. Body digest is stub (sha256_hex(&[])); planned for follow-up.
+  - Determinism: t0/t1 via process_clock(); ids via next_monotonic_id() — good. Dynamic serde_json! maps risk unstable field ordering vs typed v2 records.
+  - Contention: hot path reads CAPTURE_LOG through RwLock each call (read lock); set_capture_log acquires write lock. This adds synchronization to every request even when log rarely changes.
+  - Memory locality/allocs: per-call to_string() for method path and construction of JSON maps; repeated constants ("grpc","client") reallocated in json!; headers_map is built conditionally but call-site uses unwrap_or_default(), which inserts an empty object in payload even when none.
+  - Error handling: WAL append Results are ignored (let _ = ...); no fail-closed path or bypass toggle used here yet.
+  - Safety: CapturedFuture::poll uses unsafe get_unchecked_mut + Pin::new_unchecked; violates project preference to deny unsafe_code in libraries.
+  - Observability: finished event stores only ok/error; lacks grpc status code; metric stub appends a WAL "metric" record under otel but not a real histogram via telemetry crate; no span around client call.
+  - API surface: test helpers wrap_service() and test_set_capture_log() are pub (not cfg(test/bench)); risks exposing test-only API.
+- Concrete enrichment actions (prioritized):
+  1) Replace RwLock<Option<JsonlEventLog>> with lock-free read path (ArcSwapOption<JsonlEventLog>) for CAPTURE_LOG; keep ability to swap in tests/bench. Alternatives if avoiding new dep: cache Arc<JsonlEventLog> in ProxyCapturedChannel on first use or at builder time (read global once) and rely on env toggle for on/off.
+  2) Remove unsafe in CapturedFuture::poll via pin projection (pin-project-lite) or manual Pin-safe struct; align with rust-standards (deny unsafe in libs).
+  3) Conditional headers field: only include headers when redaction map is Some(..); avoid allocating/serializing empty object and adhere to spec.
+  4) Fail-closed by default on WAL append errors with explicit override (ORCA_BYPASS_TO_DIRECT=1) and log an audit error; add tests for both paths.
+  5) Observability polish: emit grpc status code (numeric) in finished event; add otel span around client call (feature=otel) with low-cardinality attrs {rpc.system, rpc.service, rpc.method, rpc.grpc.status_code}; move metrics to telemetry histogram (orca.proxy.capture.duration_ms), keep labels capped.
+  6) Align WAL with typed v2 schema for ExternalIoStarted/Finished payloads to guarantee stable key ordering and reduce dynamic map allocs.
+  7) Narrow public API: guard wrap_service() and test_set_capture_log() behind cfg(any(test, bench)) or make crate-private; keep builder as the ergonomic public entry.
+  8) Micro-allocs: reuse small static &strs where possible; avoid to_string() for constants; consider borrowing &str into typed payloads.
+- Follow-ups (next phases):
+  - PERFORMANCE RESEARCH: quantify RwLock read cost vs ArcSwapOption (microbench/minimal harness); measure capture ON vs OFF delta with current path; set/validate ≤2 ms p95 budget; plan span/hist overhead budget. Benchmarks: benches/capture_overhead.rs under --features capture.
+  - REFACTOR: implement items (1)–(7) with minimal diffs and tests; wire telemetry histogram and span; adopt fail-closed with bypass; remove unsafe; conditionally include headers field; optionally align to typed v2 events.
+
+
+- Date (UTC): 2025-10-30 12:10
+- Area: Runtime|Proxy|Tests|Docs
+- Context/Goal: GREEN — client-side capture wiring (Issue #84). Move capture-enabled tests to unit tests to unblock symbol-resolution issue; validate WAL emission + metrics under feature flags.
+- Actions:
+  - Moved 3 capture-gated tests from crates/orchestrator/tests/proxy_client_capture_red.rs → unit tests in crates/orchestrator/src/proxy.rs under #[cfg(all(test, feature="capture"))].
+  - Kept a minimal non-capture integration test verifying redacted_headers_from_http behavior when capture feature is disabled.
+  - Validated capture metrics stub by appending a WAL metric record when feature "otel" is enabled.
+  - Ran validation gates:
+    - cargo fmt --all -- --check
+    - cargo clippy -p orchestrator -p event-log -- -D warnings
+    - cargo test -p orchestrator --features capture -- --nocapture
+    - cargo test -p orchestrator -- --nocapture
+- Results:
+  - fmt: PASS; clippy: PASS.
+  - Tests (capture ON): PASS — unit tests in src/proxy.rs (3/3), integration file has 0 capture tests by design.
+  - Tests (default features): PASS — all orchestrator tests, including minimal integration test.
+- Diagnostics:
+  - Integration test symbol resolution against orchestrator::proxy::* under features=capture was brittle. Co-locating capture tests with implementation reduced surface area changes and kept tests hermetic and deterministic.
+- Decision(s):
+  - Adopt unit tests for client capture path for GREEN to minimize scope and keep API stable. Proceed to PRE-REFACTOR RESEARCH next.
+- Follow-ups:
+  - PRE-REFACTOR RESEARCH: review cache locality, potential lock-free paths, telemetry coverage.
+  - PERFORMANCE RESEARCH: finalize ≤2 ms p95 overhead target; run/extend capture_overhead bench for ON vs OFF.
+
+
+- Date (UTC): 2025-10-29 19:28
+- Area: Orchestrator|Proxy|Tests|Bench|Docs
+- Context/Goal: RED — Add failing tests for client-side WAL emission + metrics stubs; extend capture_overhead bench for client ON/OFF (Issue #84).
+- Actions:
+  - Added tests file crates/orchestrator/tests/proxy_client_capture_red.rs with 4 failing tests covering: started event (direction="client"), finished correlation, redaction behavior, and metrics feature-gating.
+  - Extended crates/orchestrator/benches/capture_overhead.rs with client ON/OFF placeholders (RED: both use direct Channel until wiring exists).
+  - Ran cargo test -p orchestrator -- --nocapture → 4 failing (expected) in proxy_client_capture_red.rs; all existing tests passed.
+  - Ran cargo clippy -p orchestrator -- -D warnings → PASS; cargo fmt check unchanged.
+- Results:
+  - Tests: FAIL (RED as intended). Summary:
+    - failing tests: client_emits_external_io_started; client_emits_external_io_finished_with_correlation; client_redaction_only_when_sensitive_headers_present; metrics_stubs_feature_gated_and_no_op_when_disabled
+  - Clippy: clean; no new warnings.
+- Next Steps (GREEN):
+  - Introduce `capture` feature flag and add wiring in ProxyCapturedChannel::call() to emit WAL ExternalIoStarted/Finished with direction="client" and deterministic request_id.
+  - Store scheme/host/port at builder time; extract method from req.uri().path(); implement redaction via HeaderMap helper.
+  - Add OTel metrics instruments under `otel` feature; ensure low-cardinality labels; make metrics no-op when disabled.
+  - Update and run client ON/OFF benchmark to validate ≤2 ms p95 overhead.
+
+
+- Date (UTC): 2025-10-29 19:14
+- Area: Orchestrator|Proxy|Observability|Performance|Docs|Git
+- Context/Goal: RESEARCH — Client-side capture wiring follow-up: WAL emission + OTel metrics for outbound gRPC (direction="client"). Kick off Enhanced TDD for new task.
+- Actions (read-only, initial):
+  - Reviewed ProxyCaptureLayer skeleton (crates/orchestrator/src/proxy.rs) and CapturedChannelBuilder; current Service<Request<BoxBody>> only exposes path; scheme/host/port not available from Request.
+  - Confirmed WAL v2 schema in event-log: ExternalIoStarted/ExternalIoFinished payloads exist with required fields (system, direction, scheme, host, port, method, request_id, headers, body_digest_sha256; and finished status/duration_ms).
+  - Surveyed telemetry crate for metrics patterns (OnceCell instruments, global::meter usage, feature-gated `otel`); identified examples in blob_observer and policy_observer.
+  - Noted orchestrator Cargo features: only `otel` present; no `capture` feature yet.
+  - Recalled Tower Service poll_ready/call patterns (forward readiness; wrap call with timing/try/fail-closed logic).
+- Findings:
+  - Endpoint extraction: Request URI carries only "/pkg.Svc/Method"; to capture scheme/host/port we must store a Uri/Endpoint at build-time in ProxyCapturedChannel (extend struct fields).
+  - Deterministic request_id via orca_core::ids::next_monotonic_id(); use VirtualClock for t0/t1 (process_clock()).
+  - Redaction: reuse redacted_headers_from_http(&HeaderMap) for client path; build headers map only if sensitive keys present (≤3 entries).
+  - Metrics: add histogram orca.proxy.capture.duration_ms (Unit ms) and counter orca.proxy.capture.errors_total with low-cardinality labels {system="grpc", direction="client", status} using telemetry/otel patterns. No exporter → no-op.
+  - Gating: introduce orchestrator `capture` feature flag (default-off). Also honor env bypass ORCA_BYPASS_TO_DIRECT for runtime fail-open override when explicitly requested.
+- Acceptance Criteria (restated):
+  - Emit started/finished WAL around outbound gRPC in ProxyCaptureLayer::call(), direction="client", deterministic request_id, redacted headers.
+  - Extract scheme/host/port from stored endpoint; method from req.uri().path().
+  - Metrics emitted with low-cardinality labels; failures increment errors_total.
+  - Overhead: ≤2 ms p95 added RTT; memory bounded (≤64 KiB incremental); feature default-off; zero/near-zero overhead when disabled.
+- Validation Plan:
+  - Extend Criterion bench capture_overhead to toggle client layer ON/OFF and measure delta (p50/p95).
+  - Unit + integration tests for WAL records (started→finished correlation; redaction present only when sensitive headers exist); feature-flag tests.
+  - Workspace gates: tests, clippy -D warnings, fmt check.
+- Risks & Mitigations:
+  - Accessing endpoint from within Service::call: mitigate by storing Uri parts in ProxyCapturedChannel via builder; avoid cloning large strings (store small owned strings prepared once per channel).
+  - Cardinality drift: cap status to known grpc codes; keep labels low-cardinality per observability rules.
+- Next Steps:
+  - RED: add failing tests for client WAL emission/redaction and metrics stubs; extend microbench scaffold for client ON/OFF.
+  - GREEN: implement ProxyCapturedChannel fields + call() wrapper; wire WAL/metrics (feature-gated `capture`).
+
+
 - Date (UTC): 2025-10-29 18:38
 - Area: Orchestrator|Proxy|Performance|CI|Docs|Git
 - Context/Goal: Complete standard end-of-task workflow for T-6a-E1-PROXY-11 — squash-merge PR, close issue, cleanup branches, sync main, validate, and update docs.

@@ -23,6 +23,12 @@ pub mod orca_v1 {
 pub mod clock;
 pub mod proxy;
 
+// Re-export only stable helpers; client capture types live under orchestrator::proxy
+pub use proxy::redacted_headers_from_http;
+
+#[cfg(feature = "capture")]
+pub use proxy::{set_capture_log, ProxyCaptureLayer};
+
 use orca_v1::{
     orchestrator_server::{Orchestrator, OrchestratorServer},
     *,
